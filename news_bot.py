@@ -3,13 +3,9 @@ import smtplib
 import feedparser
 import time
 import urllib.parse
-import urllib.request
 import re
-import requests # 웹페이지 접속용
-from bs4 import BeautifulSoup # HTML 본문 추출용
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.mime.application import MIMEApplication
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import google.generativeai as genai
@@ -74,69 +70,8 @@ def is_recent(published_str):
     except:
         return True
 
-def fetch_article_content(url):
-    """링크를 타고 들어가서 기사 본문 텍스트를 긁어옴 (스크랩용)"""
-    try:
-        # 구글 뉴스 리다이렉트 등을 통과하기 위한 헤더 보강
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
-        }
-        
-        # Session 사용으로 리다이렉트 추적 능력 향상
-        session = requests.Session()
-        # 타임아웃 10초로 넉넉하게 설정
-        response = session.get(url, headers=headers, timeout=10, allow_redirects=True)
-        response.encoding = response.apparent_encoding # 한글 깨짐 방지
-        
-        # 구글 뉴스 기본 페이지가 긁혔는지 확인 (실패로 간주)
-        if "Comprehensive up-to-date news coverage" in response.text:
-            return None
-
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # 불필요한 요소 제거 (광고, 메뉴, 스크립트 등)
-            for element in soup(["script", "style", "header", "footer", "nav", "aside", "iframe", "form"]):
-                element.decompose()
-
-            content = ""
-            
-            # 1. <article> 태그 우선 검색
-            article = soup.find('article')
-            if article:
-                content = article.get_text(strip=True, separator='\n')
-            else:
-                # 2. 본문으로 추정되는 <div>나 <p> 태그 수집
-                # 주요 언론사별 본문 클래스명 패턴 시도
-                target_divs = soup.find_all('div', class_=re.compile(r'(article|content|body|detail)', re.I))
-                if target_divs:
-                    # 가장 텍스트가 긴 div 선택
-                    best_div = max(target_divs, key=lambda x: len(x.get_text()))
-                    content = best_div.get_text(strip=True, separator='\n')
-                else:
-                    # 최후의 수단: 모든 <p> 태그 수집
-                    paragraphs = soup.find_all('p')
-                    # 너무 짧은 문장 제외하고 합치기
-                    content = "\n".join([p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 20])
-            
-            # 텍스트 정제 (연속된 공백/줄바꿈 제거)
-            content = re.sub(r'\n\s*\n', '\n\n', content)
-            
-            # 내용이 너무 짧거나 구글 안내 문구면 실패 처리
-            if len(content) < 50 or "Comprehensive up-to-date" in content:
-                return None
-
-            return content[:1500] + "..." if len(content) > 1500 else content # 최대 1500자
-    except Exception as e:
-        print(f"    - Scraping Error: {e}")
-        return None
-    
-    return None
-
 def fetch_news():
-    """RSS 뉴스 수집 + 본문 스크랩"""
+    """RSS 뉴스 수집 (스크랩 제거로 속도 향상)"""
     news_items = []
     print("🔍 뉴스 수집 시작...")
     
@@ -158,29 +93,11 @@ def fetch_news():
                         continue
 
                     if not any(item['link'] == entry.link for item in news_items):
-                        # RSS에 기본적으로 포함된 요약문(summary) 가져오기 (HTML 태그 제거)
-                        rss_summary = ""
-                        if hasattr(entry, 'summary'):
-                             rss_summary = BeautifulSoup(entry.summary, "html.parser").get_text(strip=True)
-                        elif hasattr(entry, 'description'):
-                             rss_summary = BeautifulSoup(entry.description, "html.parser").get_text(strip=True)
-
-                        print(f"  Scraping: {entry.title[:10]}...")
-                        # 본문 스크랩 시도
-                        scraped_text = fetch_article_content(entry.link)
-                        
-                        # 스크랩 성공하면 본문 사용, 실패하면 RSS 요약문 사용
-                        final_text = scraped_text if scraped_text else f"(본문 수집 불가 - 요약본 제공)\n\n{rss_summary}"
-                        
-                        if not final_text.strip():
-                            final_text = "(본문 내용을 불러올 수 없습니다. 링크를 확인해주세요.)"
-
                         news_items.append({
                             "title": entry.title,
                             "link": entry.link,
                             "keyword": keyword,
-                            "date": entry.published,
-                            "full_text": final_text # 본문 저장
+                            "date": entry.published
                         })
         except Exception as e:
             print(f"⚠️ '{keyword}' 오류: {e}")
@@ -190,11 +107,11 @@ def fetch_news():
     return news_items
 
 def generate_report(news_items):
-    """Gemini AI 리포트 (날짜 강제 주입)"""
+    """Gemini AI 리포트 (가독성 높은 HTML 구조 요청)"""
     if not news_items: return None
     
     kst_now = get_korea_time()
-    today_formatted = kst_now.strftime("%Y년 %m월 %d일") # 예: 2025년 05월 20일
+    today_formatted = kst_now.strftime("%Y년 %m월 %d일") 
     
     print("🧠 AI 분석 시작...")
     try:
@@ -203,9 +120,10 @@ def generate_report(news_items):
 
         news_text = ""
         for idx, item in enumerate(news_items):
-            news_text += f"[{idx+1}] {item['title']} ({item['keyword']})\n"
+            # 링크를 포함하여 AI에게 전달
+            news_text += f"[{idx+1}] {item['title']} (키워드: {item['keyword']}) | Link: {item['link']}\n"
 
-        # 프롬프트에 날짜와 부서명을 명확히 박아넣음
+        # 프롬프트 수정: 가독성을 위한 구조화된 HTML 요청
         prompt = f"""
         오늘은 {today_formatted}입니다.
         당신은 **포스코이앤씨 구매계약실**의 수석 애널리스트입니다.
@@ -215,16 +133,29 @@ def generate_report(news_items):
         {news_text}
 
         [작성 원칙]
-        1. **날짜 준수**: 반드시 오늘 날짜({today_formatted})를 기준으로 작성하세요. 2024년 등 과거 연도 표기 금지.
+        1. **날짜 준수**: 반드시 오늘 날짜({today_formatted})를 기준으로 작성하세요.
         2. **주식/투자 배제**: 건설 테마주, 주가 등락 내용은 절대 포함하지 마세요.
         3. **구매계약실 관점**: 계약, 납기, 단가, 법적 리스크 위주로 분석하세요.
 
-        [보고서 형식 (HTML)]
-        - `<div>` 태그로 감싸서 작성.
-        - **[오늘의 시장 날씨]**: ☀️/☁️/☔ 아이콘 사용하여 1줄 요약.
-        - **분야별 뉴스**: 
-          - [규제/리스크], [자재/시황], [글로벌/물류] 등으로 분류.
-          - 각 기사 하단에 `💡Insight: (내용)` 한 줄 추가.
+        [보고서 형식 (HTML Style)]
+        - **절대** `<html>`, `<head>`, `<body>` 태그를 쓰지 마세요. `<div>`로 시작하는 본문 내용만 작성하세요.
+        - 각 뉴스 아이템은 가독성을 위해 카드 형태로 구분되어야 합니다.
+        
+        [HTML 구조 가이드]
+        1. **시장 날씨 요약**: 
+           `<div style="background-color: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 5px solid #0054a6;">`
+           안에 ☀️/☁️/☔ 아이콘과 함께 시장 요약 1문장 작성.
+        
+        2. **카테고리 섹션**: 
+           `[규제/리스크]`, `[자재/시황]`, `[글로벌/물류]` 등으로 분류하여 섹션 제목(`<h3>`) 작성.
+        
+        3. **기사 카드**:
+           각 기사는 아래 스타일을 적용한 `<div>`로 감싸세요:
+           `<div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 15px; margin-bottom: 15px;">`
+           
+           - **제목**: `<a href="..." style="font-size: 16px; font-weight: bold; color: #0054a6; text-decoration: none;">제목</a>`
+           - **내용**: `<p style="margin: 8px 0; font-size: 14px; color: #333;">기사 핵심 요약...</p>`
+           - **인사이트**: `<div style="background-color: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 13px; color: #555;">💡 <b>Insight:</b> 구매계약실 대응 방안...</div>`
         """
         
         response = model.generate_content(prompt)
@@ -233,91 +164,53 @@ def generate_report(news_items):
         print(f"❌ AI 분석 중 오류: {e}")
         return None
 
-# --- PDF 스크랩북 생성 (본문 포함) ---
-def create_scrap_pdf(news_items):
-    print("📄 스크랩 PDF 생성 시작...")
-    try:
-        from fpdf import FPDF
-    except ImportError:
-        print("❌ fpdf2 라이브러리가 없습니다.")
-        return None
-
-    font_path = 'NanumGothic.ttf'
-    if not os.path.exists(font_path):
-        urllib.request.urlretrieve("https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Regular.ttf", font_path)
-
-    pdf = FPDF()
-    pdf.add_font('Nanum', '', font_path) # 폰트 등록 먼저!
-    pdf.add_page()
-
-    kst_now = get_korea_time()
-    date_str = kst_now.strftime("%Y년 %m월 %d일")
-
-    # 타이틀
-    pdf.set_font('Nanum', size=20)
-    pdf.cell(0, 15, f'구매계약실 일일 뉴스 스크랩 ({date_str})', ln=True, align='C')
-    pdf.ln(10)
-
-    # 뉴스 루프
-    for idx, item in enumerate(news_items):
-        # 기사 제목
-        pdf.set_font('Nanum', size=14)
-        pdf.set_text_color(0, 84, 166) # 포스코 블루
-        pdf.multi_cell(0, 8, f"{idx+1}. {item['title']}")
-        
-        # 메타 정보
-        pdf.set_font('Nanum', size=9)
-        pdf.set_text_color(100, 100, 100)
-        pdf.cell(0, 6, f"키워드: {item['keyword']} | 링크: {item['link'][:50]}...", ln=True, link=item['link'])
-        pdf.ln(2)
-
-        # 기사 본문 (스크랩 내용)
-        pdf.set_font('Nanum', size=10)
-        pdf.set_text_color(30, 30, 30)
-        # 본문 텍스트 정리 (줄바꿈 등)
-        body_text = item.get('full_text', '내용 없음').replace('\t', '  ')
-        # 한글 폰트에서 유니코드 문자가 깨질 수 있으므로 기본 정제
-        body_text = body_text.encode('latin-1', 'replace').decode('latin-1') # fpdf 인코딩 에러 방지용 (심플 처리)
-        # 실제로는 fpdf2가 유니코드를 꽤 잘 처리하지만, 안전장치로 특수문자 일부 제외
-        
-        pdf.multi_cell(0, 5, body_text)
-        
-        # 기사 간 구분선
-        pdf.ln(5)
-        pdf.set_draw_color(200, 200, 200)
-        pdf.line(10, pdf.get_y(), 200, pdf.get_y())
-        pdf.ln(10)
-
-    filename = f"News_Scrap_{kst_now.strftime('%Y%m%d')}.pdf"
-    pdf.output(filename)
-    return filename
-
-def send_email(html_body, pdf_file=None):
+def send_email(html_body):
+    """이메일 발송 (디자인 템플릿 개선)"""
     if not html_body: return
 
     kst_now = get_korea_time()
     today_str = kst_now.strftime("%Y년 %m월 %d일")
     subject = f"[Daily] {today_str} 구매계약실 시장 동향 보고"
     
-    # 깔끔한 리스트 형태의 HTML (Original Style)
+    # 이메일 클라이언트를 위한 인라인 스타일이 적용된 HTML 템플릿
     full_html = f"""
+    <!DOCTYPE html>
     <html>
-    <body style="font-family: 'Malgun Gothic', sans-serif; color: #333; line-height: 1.6;">
-        <div style="padding: 20px; border: 1px solid #ddd;">
-            <h2 style="color: #0054a6; margin-bottom: 20px;">POSCO E&C 구매계약실 Daily Briefing</h2>
-            <p>안녕하십니까, 구매계약실 여러분.<br>
-            {today_str} 주요 시장 동향입니다.</p>
-            
-            <div style="background-color: #f9f9f9; padding: 15px; border-left: 5px solid #0054a6; margin: 20px 0;">
-                <strong>📂 유첨:</strong> 금일 주요 기사 전문 스크랩 (PDF)
+    <head>
+    <meta charset="utf-8">
+    <style>
+        body {{ font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; color: #333; background-color: #f4f6f8; margin: 0; padding: 0; }}
+        .email-container {{ max-width: 600px; margin: 0 auto; background-color: #ffffff; }}
+        .header {{ background-color: #0054a6; color: #ffffff; padding: 20px; text-align: center; }}
+        .header h1 {{ margin: 0; font-size: 24px; font-weight: bold; }}
+        .header p {{ margin: 5px 0 0; opacity: 0.9; font-size: 14px; }}
+        .content {{ padding: 30px 20px; }}
+        .footer {{ background-color: #f9f9f9; padding: 20px; text-align: center; font-size: 12px; color: #888; border-top: 1px solid #eee; }}
+    </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <!-- 헤더 -->
+            <div class="header">
+                <h1>Daily Market Briefing</h1>
+                <p>POSCO E&C 구매계약실 | {today_str}</p>
             </div>
-
-            <hr style="border:0; border-top:1px solid #eee; margin: 20px 0;">
             
-            {html_body}
+            <!-- 본문 -->
+            <div class="content">
+                <p style="margin-bottom: 25px; font-size: 15px;">
+                    안녕하십니까, 구매계약실 여러분.<br>
+                    오늘의 주요 건설/자재 시장 이슈와 리스크 요인을 보고드립니다.
+                </p>
+                
+                {html_body}
+            </div>
             
-            <hr style="border:0; border-top:1px solid #eee; margin: 20px 0;">
-            <p style="font-size: 12px; color: #888;">* 본 메일은 AI Agent가 자동 발송했습니다.</p>
+            <!-- 푸터 -->
+            <div class="footer">
+                <p>본 메일은 AI Agent에 의해 자동 생성 및 발송되었습니다.</p>
+                <p>© POSCO E&C Purchase Contract Division</p>
+            </div>
         </div>
     </body>
     </html>
@@ -328,12 +221,6 @@ def send_email(html_body, pdf_file=None):
     msg['To'] = EMAIL_RECEIVERS
     msg['Subject'] = subject
     msg.attach(MIMEText(full_html, 'html'))
-
-    if pdf_file and os.path.exists(pdf_file):
-        with open(pdf_file, "rb") as f:
-            attach = MIMEApplication(f.read(), _subtype="pdf")
-            attach.add_header('Content-Disposition', 'attachment', filename=pdf_file)
-            msg.attach(attach)
 
     try:
         server = smtplib.SMTP('smtp.gmail.com', 587)
@@ -353,10 +240,9 @@ if __name__ == "__main__":
         items = fetch_news()
         if items:
             report_html = generate_report(items)
-            pdf_filename = create_scrap_pdf(items) # 스크랩 전용 PDF 생성
             
             if report_html:
-                send_email(report_html, pdf_filename)
+                send_email(report_html)
             else:
                 print("❌ 리포트 생성 실패")
         else:
