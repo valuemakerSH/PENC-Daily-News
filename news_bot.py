@@ -107,7 +107,7 @@ def fetch_news():
     return news_items
 
 def generate_report(news_items):
-    """Gemini AI 리포트 (가독성 높은 HTML 구조 요청)"""
+    """Gemini AI 리포트 (가독성 개선 및 버튼형 링크 적용)"""
     if not news_items: return None
     
     kst_now = get_korea_time()
@@ -120,10 +120,9 @@ def generate_report(news_items):
 
         news_text = ""
         for idx, item in enumerate(news_items):
-            # 링크를 포함하여 AI에게 전달
             news_text += f"[{idx+1}] {item['title']} (키워드: {item['keyword']}) | Link: {item['link']}\n"
 
-        # 프롬프트 수정: 가독성을 위한 구조화된 HTML 요청
+        # 프롬프트 수정: 가독성을 위한 카드형 디자인 및 별도 링크 버튼 요청
         prompt = f"""
         오늘은 {today_formatted}입니다.
         당신은 **포스코이앤씨 구매계약실**의 수석 애널리스트입니다.
@@ -139,23 +138,25 @@ def generate_report(news_items):
 
         [보고서 형식 (HTML Style)]
         - **절대** `<html>`, `<head>`, `<body>` 태그를 쓰지 마세요. `<div>`로 시작하는 본문 내용만 작성하세요.
-        - 각 뉴스 아이템은 가독성을 위해 카드 형태로 구분되어야 합니다.
+        - **가독성 강화**: 글자 크기를 키우고(15px 이상), 줄 간격을 넉넉히(1.6) 잡으세요.
+        - **링크 분리**: 제목에 링크를 걸지 말고, 별도의 '🔗 기사 원문 보기' 버튼을 만드세요.
         
         [HTML 구조 가이드]
         1. **시장 날씨 요약**: 
-           `<div style="background-color: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 5px solid #0054a6;">`
-           안에 ☀️/☁️/☔ 아이콘과 함께 시장 요약 1문장 작성.
+           `<div style="background-color: #e3f2fd; padding: 20px; border-radius: 12px; margin-bottom: 30px; border-left: 6px solid #0054a6;">`
+           안에 ☀️/☁️/☔ 아이콘과 함께 시장 요약 1문장을 굵은 글씨로 작성.
         
         2. **카테고리 섹션**: 
-           `[규제/리스크]`, `[자재/시황]`, `[글로벌/물류]` 등으로 분류하여 섹션 제목(`<h3>`) 작성.
+           `[규제/리스크]`, `[자재/시황]`, `[글로벌/물류]` 등 섹션 제목을 `<h3>` 태그로 명확히 구분 (`color: #222; margin-top: 30px; border-bottom: 2px solid #ddd; padding-bottom: 10px;`).
         
         3. **기사 카드**:
-           각 기사는 아래 스타일을 적용한 `<div>`로 감싸세요:
-           `<div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 15px; margin-bottom: 15px;">`
+           각 기사는 아래 스타일을 적용하세요:
+           `<div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-radius: 12px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.03);">`
            
-           - **제목**: `<a href="..." style="font-size: 16px; font-weight: bold; color: #0054a6; text-decoration: none;">제목</a>`
-           - **내용**: `<p style="margin: 8px 0; font-size: 14px; color: #333;">기사 핵심 요약...</p>`
-           - **인사이트**: `<div style="background-color: #f5f5f5; padding: 10px; border-radius: 4px; font-size: 13px; color: #555;">💡 <b>Insight:</b> 구매계약실 대응 방안...</div>`
+           - **제목**: `<div style="font-size: 18px; font-weight: bold; color: #111; margin-bottom: 10px;">제목</div>`
+           - **내용**: `<div style="font-size: 15px; color: #444; line-height: 1.6; margin-bottom: 15px;">기사 핵심 요약...</div>`
+           - **인사이트**: `<div style="background-color: #f8f9fa; padding: 12px; border-radius: 8px; font-size: 14px; color: #0054a6; font-weight: 600; margin-bottom: 15px;">💡 Insight: 구매계약실 대응 방안...</div>`
+           - **버튼**: `<a href="..." style="display: inline-block; background-color: #0054a6; color: #ffffff; padding: 10px 15px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: bold;">🔗 기사 원문 보기</a>`
         """
         
         response = model.generate_content(prompt)
@@ -165,7 +166,7 @@ def generate_report(news_items):
         return None
 
 def send_email(html_body):
-    """이메일 발송 (디자인 템플릿 개선)"""
+    """이메일 발송 (디자인 템플릿 개선 - 헤더 가독성 및 줄바꿈 방지)"""
     if not html_body: return
 
     kst_now = get_korea_time()
@@ -181,10 +182,11 @@ def send_email(html_body):
     <style>
         body {{ font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; color: #333; background-color: #f4f6f8; margin: 0; padding: 0; }}
         .email-container {{ max-width: 600px; margin: 0 auto; background-color: #ffffff; }}
-        .header {{ background-color: #0054a6; color: #ffffff; padding: 20px; text-align: center; }}
-        .header h1 {{ margin: 0; font-size: 24px; font-weight: bold; }}
-        .header p {{ margin: 5px 0 0; opacity: 0.9; font-size: 14px; }}
+        .header {{ background-color: #0054a6; color: #ffffff; padding: 25px 20px; text-align: center; }}
+        .header h1 {{ margin: 0 0 10px 0; font-size: 26px; font-weight: bold; letter-spacing: -0.5px; }}
+        .header-info {{ font-size: 14px; opacity: 0.9; line-height: 1.4; }}
         .content {{ padding: 30px 20px; }}
+        .intro-text {{ margin-bottom: 30px; font-size: 16px; color: #444; }}
         .footer {{ background-color: #f9f9f9; padding: 20px; text-align: center; font-size: 12px; color: #888; border-top: 1px solid #eee; }}
     </style>
     </head>
@@ -193,15 +195,18 @@ def send_email(html_body):
             <!-- 헤더 -->
             <div class="header">
                 <h1>Daily Market Briefing</h1>
-                <p>POSCO E&C 구매계약실 | {today_str}</p>
+                <div class="header-info">
+                    POSCO E&C 구매계약실<br>
+                    {today_str}
+                </div>
             </div>
             
             <!-- 본문 -->
             <div class="content">
-                <p style="margin-bottom: 25px; font-size: 15px;">
+                <div class="intro-text">
                     안녕하십니까, 구매계약실 여러분.<br>
                     오늘의 주요 건설/자재 시장 이슈와 리스크 요인을 보고드립니다.
-                </p>
+                </div>
                 
                 {html_body}
             </div>
