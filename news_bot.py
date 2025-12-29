@@ -168,9 +168,12 @@ def create_pdf(news_items, ai_summary_html):
             self.cell(0, 10, f'Page {self.page_no()}', align='C')
 
     pdf = ReportPDF()
-    pdf.add_page()
+    
+    # [수정됨] 페이지 추가 전에 폰트 등록을 먼저 해야 합니다. (header에서 폰트를 사용하므로)
     pdf.add_font('Nanum', '', font_path)
     pdf.add_font('NanumBold', '', font_bold_path)
+    
+    pdf.add_page()
 
     kst_now = get_korea_time()
     date_str = kst_now.strftime("%B %d, %Y")
