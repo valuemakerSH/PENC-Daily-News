@@ -1,3 +1,5 @@
 feedparser
 google-generativeai
 fpdf2
+requests
+beautifulsoup4
