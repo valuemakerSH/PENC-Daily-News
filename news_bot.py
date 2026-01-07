@@ -1,283 +1,157 @@
-import os
-import smtplib
-import feedparser
-import time
-import urllib.parse
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
-import google.generativeai as genai
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Email Report Preview (With Headline List)</title>
+<style>
+    /* 실제 적용되는 CSS 스타일 (news_bot.py와 동일) */
+    body { font-family: 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }
+    .email-wrapper { width: 100%; background-color: #f2f4f7; padding: 50px 0; }
+    .email-container { max-width: 850px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }
+    .header { background-color: #0054a6; color: #ffffff; padding: 40px 50px; }
+    .header h1 { margin: 0; font-size: 32px; font-weight: 800; letter-spacing: -0.5px; }
+    .header-sub { font-size: 18px; margin-top: 10px; opacity: 0.9; font-weight: 500; }
+    .content { padding: 50px; background-color: #ffffff; }
+    .intro-text { margin-bottom: 50px; font-size: 18px; color: #344054; padding-bottom: 30px; border-bottom: 1px solid #eaecf0; word-break: keep-all; }
+    .footer { background-color: #101828; padding: 40px; text-align: center; font-size: 14px; color: #98a2b3; }
+    .footer p { margin: 5px 0; }
 
-# --- 환경 변수 설정 (GitHub Secrets) ---
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-EMAIL_SENDER = os.environ.get("EMAIL_SENDER")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
-EMAIL_RECEIVERS = os.environ.get("EMAIL_RECEIVERS")
-
-# --- 설정: 키워드 및 필터 ---
-KEYWORDS = [
-    "포스코이앤씨", 
-    "건설 원자재 가격", 
-    "공정위 하도급 건설", 
-    "건설 중대재해처벌법",
-    "건설사 협력사 ESG",
-    "주요 건설사 구매 동향",
-    "건설 자재 환율 유가",
-    "해상 운임 SCFI 건설",
-    "스마트 건설 모듈러 OSC",
-    "건설 현장 인력난 외국인",
-    "건설 노조 파업 노란봉투법",
-    "납품대금 연동제 건설",
-    "건설산업기본법 개정",
-    "화물연대 레미콘 운송 파업",
-    "건설 동반성장 상생" # [추가] 협력사 상생 및 동반성장 이슈
-]
-
-# 주식/투자 관련 노이즈 제거를 위한 금지어 목록
-EXCLUDE_KEYWORDS = [
-    "특징주", "테마주", "관련주", "주가", "급등", "급락", "상한가", "하한가",
-    "거래량", "매수", "매도", "목표가", "체결", "증시", "종목", "투자자",
-    "지수", "코스피", "코스닥", "마감"
-]
-
-def get_korea_time():
-    """서버 시간(UTC)을 한국 시간(KST)으로 변환"""
-    utc_now = datetime.now(timezone.utc)
-    kst_now = utc_now + timedelta(hours=9)
-    return kst_now
-
-def is_stock_noise(title):
-    """제목에 주식 관련 금지어가 있는지 검사"""
-    for bad_word in EXCLUDE_KEYWORDS:
-        if bad_word in title:
-            return True
-    return False
-
-def is_recent(published_str):
-    """뉴스 날짜가 24시간 이내인지 확인"""
-    if not published_str: return False
-    try:
-        pub_date = parsedate_to_datetime(published_str)
-        if pub_date.tzinfo:
-            pub_date = pub_date.astimezone(timezone.utc)
-        else:
-            pub_date = pub_date.replace(tzinfo=timezone.utc)
-        
-        now_utc = datetime.now(timezone.utc)
-        one_day_ago = now_utc - timedelta(hours=24)
-        return pub_date > one_day_ago
-    except:
-        return True
-
-def fetch_news():
-    """RSS 뉴스 수집 (수집 개수 제한 완전 해제)"""
-    news_items = []
-    print("🔍 뉴스 수집 시작...")
+    /* AI가 생성하는 본문 스타일 */
+    .weather-section {
+        background-color: #eaf4fc; 
+        padding: 30px; 
+        border-radius: 12px; 
+        margin-bottom: 40px; 
+        border: 1px solid #dbeafe; 
+        word-break: keep-all;
+    }
     
-    for keyword in KEYWORDS:
-        negative_query = " -주식 -종목 -테마 -특징주"
-        encoded_query = urllib.parse.quote(f"{keyword}{negative_query} when:1d")
-        url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
-        
-        try:
-            feed = feedparser.parse(url)
+    .category-title {
+        font-size: 24px; 
+        color: #111; 
+        margin: 50px 0 20px 0; 
+        border-left: 5px solid #0054a6; 
+        padding-left: 15px;
+        font-weight: 700;
+    }
+    
+    /* 카드 스타일 */
+    .news-card {
+        background-color: #ffffff; 
+        border: 1px solid #eaecf0; 
+        border-radius: 16px; 
+        padding: 30px; 
+        margin-bottom: 25px; 
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    }
+    .news-title { font-size: 22px; font-weight: 700; color: #101828; margin-bottom: 15px; line-height: 1.4; word-break: keep-all; }
+    .news-body { font-size: 17px; color: #475467; line-height: 1.8; margin-bottom: 20px; word-break: keep-all; }
+    .insight-table { width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px; border-radius: 8px; }
+    .insight-label { padding: 15px 5px 15px 20px; width: 1%; white-space: nowrap; vertical-align: top; font-weight: bold; font-size: 16px; }
+    .insight-content { padding: 15px 20px 15px 5px; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all; }
+    .risk-critical { background-color: #fdecea; color: #d32f2f; }
+    .risk-warning  { background-color: #fff4e5; color: #ed6c02; }
+    .risk-info     { background-color: #f0f9ff; color: #0288d1; }
+    .link-wrapper { text-align: right; }
+    .link-btn { display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600; }
+    .link-btn:hover { background-color: #f9fafb; }
+
+    /* [NEW] 하단 단신 리스트 스타일 */
+    .headline-list-box {
+        background-color: #f8f9fa;
+        border-top: 2px solid #0054a6;
+        padding: 20px 25px;
+        margin-top: 10px;
+        margin-bottom: 40px;
+    }
+    .headline-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: #0054a6;
+        margin-bottom: 15px;
+    }
+    .headline-ul {
+        margin: 0;
+        padding-left: 20px;
+    }
+    .headline-li {
+        margin-bottom: 8px;
+        font-size: 15px;
+        color: #555;
+    }
+    .headline-link {
+        text-decoration: none;
+        color: #333;
+        transition: color 0.2s;
+    }
+    .headline-link:hover {
+        color: #0054a6;
+        text-decoration: underline;
+    }
+</style>
+</head>
+<body>
+    <div class="email-wrapper">
+        <div class="email-container">
+            <div class="header">
+                <h1>Daily Market & Risk Briefing</h1>
+                <div class="header-sub">POSCO E&C 구매계약실 | 2026년 1월 8일</div>
+            </div>
             
-            if not feed.entries and hasattr(feed, 'bozo_exception'): pass
-
-            # [수정] 슬라이싱([:N])과 개수 카운트 제한을 모두 제거
-            # RSS 피드에 있는 모든 항목을 순회하며 검토
-            for entry in feed.entries: 
-                if is_recent(entry.published):
-                    if is_stock_noise(entry.title):
-                        continue
-
-                    if not any(item['link'] == entry.link for item in news_items):
-                        news_items.append({
-                            "title": entry.title,
-                            "link": entry.link,
-                            "keyword": keyword,
-                            "date": entry.published
-                        })
-                        
-        except Exception as e:
-            print(f"⚠️ '{keyword}' 오류: {e}")
-            continue
-            
-    print(f"✅ 총 {len(news_items)}개의 최신 뉴스 수집 완료.")
-    return news_items
-
-def generate_report(news_items):
-    """Gemini AI 리포트 (링크 치환 + 리스크 등급별 색상 적용)"""
-    if not news_items: return None
-    
-    kst_now = get_korea_time()
-    today_formatted = kst_now.strftime("%Y년 %m월 %d일") 
-    
-    print("🧠 AI 분석 시작...")
-    try:
-        genai.configure(api_key=GOOGLE_API_KEY)
-        model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
-
-        news_text = ""
-        # [핵심] 링크 보호를 위한 매핑 딕셔너리 생성
-        link_map = {}
-        
-        for idx, item in enumerate(news_items):
-            # 복잡한 URL 대신 __LINK_0__ 같은 안전한 가짜 주소를 AI에게 전달
-            placeholder = f"__LINK_{idx}__"
-            link_map[placeholder] = item['link']
-            news_text += f"[{idx+1}] {item['title']} (키워드: {item['keyword']}) | Link: {placeholder}\n"
-
-        prompt = f"""
-        오늘은 {today_formatted}입니다.
-        당신은 **포스코이앤씨 구매계약실**의 수석 애널리스트입니다.
-        
-        [뉴스 목록]
-        {news_text}
-
-        [작성 원칙]
-        1. **날짜 준수**: 반드시 오늘 날짜({today_formatted})를 기준으로 작성.
-        2. **주식/투자 배제**: 건설 테마주, 주가 등락 내용 절대 포함 금지.
-        3. **상세 요약**: 육하원칙에 따라 3~4문장으로 구체적으로 작성.
-        4. **전수 분석**: 제공된 뉴스 목록 중 중복이 아니고 유의미한 기사는 **최대한 많이(빠짐없이)** 리포트에 포함시키세요.
-        5. **링크 유지**: 뉴스 목록에 있는 `__LINK_N__` 형태의 링크 주소를 그대로 사용하세요. 절대 변경하지 마세요.
-        6. **리스크 등급 평가**: 각 기사가 구매 업무(원가, 납기, 수급)에 미치는 영향도를 판단하여 3단계(Critical, Warning, Info)로 구분하세요.
-
-        [보고서 형식 (HTML Style - Premium Layout)]
-        - `<div>`, `<table>` 등 Body 내부 태그로만 작성.
-        - **디자인 핵심**: 모든 텍스트 스타일에 `word-break: keep-all;`을 반드시 포함하여 한글 단어가 중간에 끊기지 않게 하세요.
-        
-        [HTML 구조 및 스타일 가이드]
-        1. **시장 날씨 (Hero Section)**: 
-           `<div style="background-color: #eaf4fc; padding: 30px; border-radius: 12px; margin-bottom: 40px; border: 1px solid #dbeafe; word-break: keep-all;">`
-           - 제목: `<h2 style="margin:0 0 15px 0; color:#0054a6; font-size:22px;">🌤️ Today's Market Weather</h2>`
-           - 내용: 시장 요약 1~2문장 (font-size: 18px, line-height: 1.6).
-        
-        2. **카테고리 섹션**: 
-           - 섹션 제목: `<h3 style="font-size: 24px; color: #111; margin: 50px 0 20px 0; border-left: 5px solid #0054a6; padding-left: 15px;">[카테고리명]</h3>`
-        
-        3. **기사 카드 (Card UI)**:
-           각 기사는 아래 스타일을 엄격히 적용:
-           `<div style="background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 25px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">`
-           
-           - **제목**: `<div style="font-size: 22px; font-weight: 700; color: #101828; margin-bottom: 15px; line-height: 1.4; word-break: keep-all;">제목</div>`
-           - **내용**: `<div style="font-size: 17px; color: #475467; line-height: 1.8; margin-bottom: 20px; word-break: keep-all;">핵심 요약(3~4문장)...</div>`
-           
-           - **인사이트 (리스크 등급별 색상 자동 적용)**:
-             판단된 리스크 등급에 따라 아래 스타일 중 하나를 선택하여 적용하세요.
-             
-             * **🔴 Critical (중대 영향 - 파업, 셧다운, 급등):** 배경색 `#fdecea`, 텍스트색 `#d32f2f` (진한 빨강)
-             * **🟠 Warning (주의 - 인상 예고, 법안 발의):** 배경색 `#fff4e5`, 텍스트색 `#ed6c02` (진한 주황)
-             * **🔵 Info (참고 - 일반 동향):** 배경색 `#f0f9ff`, 텍스트색 `#0288d1` (진한 파랑)
-
-             `<table style="background-color: [배경색]; border-radius: 8px; width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px;">`
-             `<tr>`
-             `<td style="padding: 15px 5px 15px 20px; width: 1%; white-space: nowrap; vertical-align: top; color: [텍스트색]; font-weight: bold; font-size: 16px;">💡 Insight:</td>`
-             `<td style="padding: 15px 20px 15px 5px; color: [텍스트색]; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all;">구매계약실 대응 방안...</td>`
-             `</tr></table>`
-             
-           - **버튼 (중요: href에 __LINK_N__ 그대로 사용)**: 
-             `<div style="text-align: right;"><a href="__LINK_N__" style="display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">🔗 원문 기사 보기</a></div>`
-        """
-        
-        response = model.generate_content(prompt)
-        html_content = response.text.replace("```html", "").replace("```", "")
-        
-        # [핵심] 생성된 HTML에서 가짜 주소를 진짜 주소로 일괄 치환
-        for placeholder, real_url in link_map.items():
-            html_content = html_content.replace(placeholder, real_url)
-            
-        return html_content
-    except Exception as e:
-        print(f"❌ AI 분석 중 오류: {e}")
-        return None
-
-def send_email(html_body):
-    """이메일 발송 (PC 최적화: 850px 와이드 레이아웃)"""
-    if not html_body: return
-
-    kst_now = get_korea_time()
-    today_str = kst_now.strftime("%Y년 %m월 %d일")
-    subject = f"[Daily] {today_str} 구매계약실 시장 동향 보고"
-    
-    full_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <meta charset="utf-8">
-    <style>
-        body {{ font-family: 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }}
-        .email-wrapper {{ width: 100%; background-color: #f2f4f7; padding: 50px 0; }}
-        .email-container {{ max-width: 850px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }}
-        .header {{ background-color: #0054a6; color: #ffffff; padding: 40px 50px; }}
-        .header h1 {{ margin: 0; font-size: 32px; font-weight: 800; letter-spacing: -0.5px; }}
-        .header-sub {{ font-size: 18px; margin-top: 10px; opacity: 0.9; font-weight: 500; }}
-        .content {{ padding: 50px; background-color: #ffffff; }}
-        .intro-text {{ margin-bottom: 50px; font-size: 18px; color: #344054; padding-bottom: 30px; border-bottom: 1px solid #eaecf0; word-break: keep-all; }}
-        .footer {{ background-color: #101828; padding: 40px; text-align: center; font-size: 14px; color: #98a2b3; }}
-        .footer p {{ margin: 5px 0; }}
-    </style>
-    </head>
-    <body>
-        <div class="email-wrapper">
-            <div class="email-container">
-                <!-- 헤더 -->
-                <div class="header">
-                    <h1>Daily Market & Risk Briefing</h1>
-                    <div class="header-sub">
-                        POSCO E&C 구매계약실 | {today_str}
-                    </div>
+            <div class="content">
+                <div class="intro-text">
+                    안녕하십니까, 구매계약실 여러분.<br>
+                    <strong>2026년 1월 8일</strong> 주요 시장 이슈와 리스크 요인을 보고드립니다.
                 </div>
                 
-                <!-- 본문 -->
-                <div class="content">
-                    <div class="intro-text">
-                        안녕하십니까, 구매계약실 여러분.<br>
-                        <strong>{today_str}</strong> 주요 시장 이슈와 리스크 요인을 보고드립니다.
+                <!-- 시장 날씨 -->
+                <div class="weather-section">
+                    <h2 style="margin:0 0 15px 0; color:#0054a6; font-size:22px;">🌤️ Today's Market Weather</h2>
+                    <div style="font-size: 18px; line-height: 1.6;">
+                        전반적인 건설 자재 시장은 <strong>'약간 흐림'</strong>입니다.
                     </div>
-                    
-                    {html_body}
                 </div>
-                
-                <!-- 푸터 -->
-                <div class="footer">
-                    <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
-                    <p>문의: 구매계약기획그룹 | © POSCO E&C</p>
+
+                <!-- [카테고리 1] 자재/시황 -->
+                <div class="category-title">[자재/시황]</div>
+
+                <!-- 메인 카드 -->
+                <div class="news-card">
+                    <div class="news-title">시멘트 업계, 전력비 상승으로 내달 12% 가격 인상 통보</div>
+                    <div class="news-body">
+                        국내 주요 시멘트사들이 유연탄 가격 상승세와 산업용 전기요금 인상을 근거로... (중략)
+                    </div>
+                    <table class="insight-table risk-warning">
+                        <tr>
+                            <td class="insight-label">💡 Insight:</td>
+                            <td class="insight-content">월말 고시 가격 확정 전 가용 물량 선발주 검토 필요.</td>
+                        </tr>
+                    </table>
+                    <div class="link-wrapper"><a href="#" class="link-btn">🔗 원문 기사 보기</a></div>
                 </div>
+
+                <!-- [NEW] 해당 카테고리 단신 모음 -->
+                <div class="headline-list-box">
+                    <div class="headline-title">📌 관련 주요 단신 (Headlines)</div>
+                    <ul class="headline-ul">
+                        <li class="headline-li">
+                            <a href="#" class="headline-link">레미콘 공업협동조합, 시멘트 가격 인상에 강력 반발 예고</a>
+                        </li>
+                        <li class="headline-li">
+                            <a href="#" class="headline-link">국제 유연탄 가격, 3주 만에 소폭 하락세 전환</a>
+                        </li>
+                        <li class="headline-li">
+                            <a href="#" class="headline-link">건설 자재 수급 안정화 민관 협의체 개최 결과</a>
+                        </li>
+                    </ul>
+                </div>
+
+            </div>
+            <div class="footer">
+                <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
+                <p>문의: 구매계약기획그룹 | © POSCO E&C</p>
             </div>
         </div>
-    </body>
-    </html>
-    """
-
-    msg = MIMEMultipart()
-    msg['From'] = EMAIL_SENDER
-    msg['To'] = EMAIL_RECEIVERS
-    msg['Subject'] = subject
-    msg.attach(MIMEText(full_html, 'html'))
-
-    try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-        receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
-        server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
-        server.quit()
-        print(f"📧 발송 성공: {len(receivers)}명에게 전송 완료.")
-    except Exception as e:
-        print(f"❌ 발송 실패: {e}")
-
-if __name__ == "__main__":
-    if not GOOGLE_API_KEY:
-        print("❌ API Key가 설정되지 않았습니다.")
-    else:
-        items = fetch_news()
-        if items:
-            report_html = generate_report(items)
-            if report_html:
-                send_email(report_html)
-            else:
-                print("❌ 리포트 생성 실패")
-        else:
-            print("수집된 뉴스가 없습니다.")
+    </div>
+</body>
+</html>
