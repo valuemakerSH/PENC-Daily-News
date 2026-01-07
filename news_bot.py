@@ -30,7 +30,8 @@ KEYWORDS = [
     "건설 노조 파업 노란봉투법",
     "납품대금 연동제 건설",
     "건설산업기본법 개정",
-    "화물연대 레미콘 운송 파업"
+    "화물연대 레미콘 운송 파업",
+    "건설 동반성장 상생" # [추가] 협력사 상생 및 동반성장 이슈
 ]
 
 # 주식/투자 관련 노이즈 제거를 위한 금지어 목록
@@ -70,7 +71,7 @@ def is_recent(published_str):
         return True
 
 def fetch_news():
-    """RSS 뉴스 수집"""
+    """RSS 뉴스 수집 (수집 개수 제한 완전 해제)"""
     news_items = []
     print("🔍 뉴스 수집 시작...")
     
@@ -84,7 +85,9 @@ def fetch_news():
             
             if not feed.entries and hasattr(feed, 'bozo_exception'): pass
 
-            for entry in feed.entries[:3]:
+            # [수정] 슬라이싱([:N])과 개수 카운트 제한을 모두 제거
+            # RSS 피드에 있는 모든 항목을 순회하며 검토
+            for entry in feed.entries: 
                 if is_recent(entry.published):
                     if is_stock_noise(entry.title):
                         continue
@@ -96,6 +99,7 @@ def fetch_news():
                             "keyword": keyword,
                             "date": entry.published
                         })
+                        
         except Exception as e:
             print(f"⚠️ '{keyword}' 오류: {e}")
             continue
@@ -119,7 +123,6 @@ def generate_report(news_items):
         for idx, item in enumerate(news_items):
             news_text += f"[{idx+1}] {item['title']} (키워드: {item['keyword']}) | Link: {item['link']}\n"
 
-        # 프롬프트: 디자인 가이드라인 강화 (Table 구조 및 word-break 필수)
         prompt = f"""
         오늘은 {today_formatted}입니다.
         당신은 **포스코이앤씨 구매계약실**의 수석 애널리스트입니다.
@@ -131,12 +134,13 @@ def generate_report(news_items):
         1. **날짜 준수**: 반드시 오늘 날짜({today_formatted})를 기준으로 작성.
         2. **주식/투자 배제**: 건설 테마주, 주가 등락 내용 절대 포함 금지.
         3. **상세 요약**: 육하원칙에 따라 3~4문장으로 구체적으로 작성.
+        4. **전수 분석**: 제공된 뉴스 목록 중 중복이 아니고 유의미한 기사는 **최대한 많이(빠짐없이)** 리포트에 포함시키세요.
 
         [보고서 형식 (HTML Style - Premium Layout)]
         - `<div>`, `<table>` 등 Body 내부 태그로만 작성.
         - **디자인 핵심**: 모든 텍스트 스타일에 `word-break: keep-all;`을 반드시 포함하여 한글 단어가 중간에 끊기지 않게 하세요.
         
-        [HTML 구조 가이드]
+        [HTML 구조 및 스타일 가이드]
         1. **시장 날씨 (Hero Section)**: 
            `<div style="background-color: #eaf4fc; padding: 30px; border-radius: 12px; margin-bottom: 40px; border: 1px solid #dbeafe; word-break: keep-all;">`
            - 제목: `<h2 style="margin:0 0 15px 0; color:#0054a6; font-size:22px;">🌤️ Today's Market Weather</h2>`
