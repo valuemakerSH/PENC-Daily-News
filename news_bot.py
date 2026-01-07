@@ -108,7 +108,7 @@ def fetch_news():
     return news_items
 
 def generate_report(news_items):
-    """Gemini AI 리포트 (PC 최적화 + Table 레이아웃 적용)"""
+    """Gemini AI 리포트 (링크 깨짐 방지를 위한 치환 방식 적용)"""
     if not news_items: return None
     
     kst_now = get_korea_time()
@@ -120,8 +120,14 @@ def generate_report(news_items):
         model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
 
         news_text = ""
+        # [핵심] 링크 보호를 위한 매핑 딕셔너리 생성
+        link_map = {}
+        
         for idx, item in enumerate(news_items):
-            news_text += f"[{idx+1}] {item['title']} (키워드: {item['keyword']}) | Link: {item['link']}\n"
+            # 복잡한 URL 대신 __LINK_0__ 같은 안전한 가짜 주소를 AI에게 전달
+            placeholder = f"__LINK_{idx}__"
+            link_map[placeholder] = item['link']
+            news_text += f"[{idx+1}] {item['title']} (키워드: {item['keyword']}) | Link: {placeholder}\n"
 
         prompt = f"""
         오늘은 {today_formatted}입니다.
@@ -135,6 +141,7 @@ def generate_report(news_items):
         2. **주식/투자 배제**: 건설 테마주, 주가 등락 내용 절대 포함 금지.
         3. **상세 요약**: 육하원칙에 따라 3~4문장으로 구체적으로 작성.
         4. **전수 분석**: 제공된 뉴스 목록 중 중복이 아니고 유의미한 기사는 **최대한 많이(빠짐없이)** 리포트에 포함시키세요.
+        5. **링크 유지**: 뉴스 목록에 있는 `__LINK_N__` 형태의 링크 주소를 그대로 사용하세요. 절대 변경하지 마세요.
 
         [보고서 형식 (HTML Style - Premium Layout)]
         - `<div>`, `<table>` 등 Body 내부 태그로만 작성.
@@ -163,11 +170,18 @@ def generate_report(news_items):
              `<td style="padding: 15px 20px 15px 5px; color: #004080; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all;">구매계약실 대응 방안...</td>`
              `</tr></table>`
              
-           - **버튼**: `<div style="text-align: right;"><a href="..." style="display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">🔗 원문 기사 보기</a></div>`
+           - **버튼 (중요: href에 __LINK_N__ 그대로 사용)**: 
+             `<div style="text-align: right;"><a href="__LINK_N__" style="display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">🔗 원문 기사 보기</a></div>`
         """
         
         response = model.generate_content(prompt)
-        return response.text.replace("```html", "").replace("```", "")
+        html_content = response.text.replace("```html", "").replace("```", "")
+        
+        # [핵심] 생성된 HTML에서 가짜 주소를 진짜 주소로 일괄 치환
+        for placeholder, real_url in link_map.items():
+            html_content = html_content.replace(placeholder, real_url)
+            
+        return html_content
     except Exception as e:
         print(f"❌ AI 분석 중 오류: {e}")
         return None
