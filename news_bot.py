@@ -108,7 +108,7 @@ def fetch_news():
     return news_items
 
 def generate_report(news_items):
-    """Gemini AI 리포트 (링크 깨짐 방지를 위한 치환 방식 적용)"""
+    """Gemini AI 리포트 (링크 치환 + 리스크 등급별 색상 적용)"""
     if not news_items: return None
     
     kst_now = get_korea_time()
@@ -142,6 +142,7 @@ def generate_report(news_items):
         3. **상세 요약**: 육하원칙에 따라 3~4문장으로 구체적으로 작성.
         4. **전수 분석**: 제공된 뉴스 목록 중 중복이 아니고 유의미한 기사는 **최대한 많이(빠짐없이)** 리포트에 포함시키세요.
         5. **링크 유지**: 뉴스 목록에 있는 `__LINK_N__` 형태의 링크 주소를 그대로 사용하세요. 절대 변경하지 마세요.
+        6. **리스크 등급 평가**: 각 기사가 구매 업무(원가, 납기, 수급)에 미치는 영향도를 판단하여 3단계(Critical, Warning, Info)로 구분하세요.
 
         [보고서 형식 (HTML Style - Premium Layout)]
         - `<div>`, `<table>` 등 Body 내부 태그로만 작성.
@@ -163,11 +164,17 @@ def generate_report(news_items):
            - **제목**: `<div style="font-size: 22px; font-weight: 700; color: #101828; margin-bottom: 15px; line-height: 1.4; word-break: keep-all;">제목</div>`
            - **내용**: `<div style="font-size: 17px; color: #475467; line-height: 1.8; margin-bottom: 20px; word-break: keep-all;">핵심 요약(3~4문장)...</div>`
            
-           - **인사이트 (Table 구조 사용 - 레이아웃 깨짐 방지)**:
-             `<table style="background-color: #f0f9ff; border: 1px solid #bce3ff; border-radius: 8px; width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px;">`
+           - **인사이트 (리스크 등급별 색상 자동 적용)**:
+             판단된 리스크 등급에 따라 아래 스타일 중 하나를 선택하여 적용하세요.
+             
+             * **🔴 Critical (중대 영향 - 파업, 셧다운, 급등):** 배경색 `#fdecea`, 텍스트색 `#d32f2f` (진한 빨강)
+             * **🟠 Warning (주의 - 인상 예고, 법안 발의):** 배경색 `#fff4e5`, 텍스트색 `#ed6c02` (진한 주황)
+             * **🔵 Info (참고 - 일반 동향):** 배경색 `#f0f9ff`, 텍스트색 `#0288d1` (진한 파랑)
+
+             `<table style="background-color: [배경색]; border-radius: 8px; width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px;">`
              `<tr>`
-             `<td style="padding: 15px 5px 15px 20px; width: 1%; white-space: nowrap; vertical-align: top; color: #0054a6; font-weight: bold; font-size: 16px;">💡 Insight:</td>`
-             `<td style="padding: 15px 20px 15px 5px; color: #004080; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all;">구매계약실 대응 방안...</td>`
+             `<td style="padding: 15px 5px 15px 20px; width: 1%; white-space: nowrap; vertical-align: top; color: [텍스트색]; font-weight: bold; font-size: 16px;">💡 Insight:</td>`
+             `<td style="padding: 15px 20px 15px 5px; color: [텍스트색]; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all;">구매계약실 대응 방안...</td>`
              `</tr></table>`
              
            - **버튼 (중요: href에 __LINK_N__ 그대로 사용)**: 
