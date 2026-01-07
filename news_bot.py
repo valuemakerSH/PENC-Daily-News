@@ -135,7 +135,9 @@ def generate_report(news_items):
         1. **날짜 준수**: 반드시 오늘 날짜({today_formatted})를 기준으로 작성.
         2. **주식/투자 배제**: 건설 테마주, 주가 등락 내용 절대 포함 금지.
         3. **구조**: 각 카테고리별로 가장 중요한 1~2개 기사는 '상세 카드(Deep Dive)'로 작성하고, 나머지 관련 기사는 하단에 '단신 리스트(Headlines)'로 모아서 정리.
-        4. **링크 규칙 (절대 준수)**: 뉴스 목록의 `__LINK_N__`을 사용하여 기사 제목이나 버튼에 링크를 거세요.
+        4. **링크 규칙 (절대 준수)**: 
+           - 뉴스 목록의 `__LINK_N__`을 사용하여 **오직 하단 버튼에만** 링크를 거세요.
+           - **[중요] 인사이트(Insight) 내용 안에는 절대 링크를 넣지 마세요.** 오직 텍스트로만 대응 방안을 작성하세요.
 
         [보고서 형식 (HTML Style)]
         - `<div>`, `<table>`, `<ul>`, `<li>` 등 Body 내부 태그로만 작성.
@@ -155,7 +157,7 @@ def generate_report(news_items):
            - 제목: `<div style="font-size: 22px; font-weight: 700; color: #101828; margin-bottom: 15px; line-height: 1.4; word-break: keep-all;">제목</div>`
            - 내용: `<div style="font-size: 17px; color: #475467; line-height: 1.8; margin-bottom: 20px; word-break: keep-all;">핵심 요약...</div>`
            
-           - **인사이트 (리스크 등급별 색상 자동 적용)**:
+           - **인사이트 (리스크 등급별 색상 자동 적용 - 링크 절대 금지)**:
              기사 내용을 분석하여 3단계(Critical/Warning/Info) 중 하나로 판단하고, 해당 스타일을 적용하세요.
              
              * **🔴 Critical (심각 - 파업, 셧다운, 급등):** 배경색 `#fdecea`, 텍스트색 `#d32f2f`
@@ -165,7 +167,7 @@ def generate_report(news_items):
              `<table style="background-color: [판단된 등급의 배경색]; border-radius: 8px; width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px;">`
              `<tr>`
              `<td style="padding: 15px 5px 15px 20px; width: 1%; white-space: nowrap; vertical-align: top; color: [판단된 등급의 텍스트색]; font-weight: bold; font-size: 16px;">💡 Insight:</td>`
-             `<td style="padding: 15px 20px 15px 5px; color: [판단된 등급의 텍스트색]; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all;">구매계약실 대응 방안...</td>`
+             `<td style="padding: 15px 20px 15px 5px; color: [판단된 등급의 텍스트색]; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all;">구매계약실 대응 방안 (텍스트만 작성, 링크 금지)...</td>`
              `</tr></table>`
              
            - 버튼: `<div style="text-align: right;"><a href="__LINK_N__" style="display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">🔗 원문 기사 보기</a></div>`
