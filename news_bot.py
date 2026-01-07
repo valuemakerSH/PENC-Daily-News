@@ -200,4 +200,77 @@ def send_email(html_body):
     <head>
     <meta charset="utf-8">
     <style>
-        body {{ font-family: 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; color: #333; background-color: #f
+        body {{ font-family: 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }}
+        .email-wrapper {{ width: 100%; background-color: #f2f4f7; padding: 50px 0; }}
+        .email-container {{ max-width: 850px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }}
+        .header {{ background-color: #0054a6; color: #ffffff; padding: 40px 50px; }}
+        .header h1 {{ margin: 0; font-size: 32px; font-weight: 800; letter-spacing: -0.5px; }}
+        .header-sub {{ font-size: 18px; margin-top: 10px; opacity: 0.9; font-weight: 500; }}
+        .content {{ padding: 50px; background-color: #ffffff; }}
+        .intro-text {{ margin-bottom: 50px; font-size: 18px; color: #344054; padding-bottom: 30px; border-bottom: 1px solid #eaecf0; word-break: keep-all; }}
+        .footer {{ background-color: #101828; padding: 40px; text-align: center; font-size: 14px; color: #98a2b3; }}
+        .footer p {{ margin: 5px 0; }}
+    </style>
+    </head>
+    <body>
+        <div class="email-wrapper">
+            <div class="email-container">
+                <!-- 헤더 -->
+                <div class="header">
+                    <h1>Daily Market & Risk Briefing</h1>
+                    <div class="header-sub">
+                        POSCO E&C 구매계약실 | {today_str}
+                    </div>
+                </div>
+                
+                <!-- 본문 -->
+                <div class="content">
+                    <div class="intro-text">
+                        안녕하십니까, 구매계약실 여러분.<br>
+                        <strong>{today_str}</strong> 주요 시장 이슈와 리스크 요인을 보고드립니다.
+                    </div>
+                    
+                    {html_body}
+                </div>
+                
+                <!-- 푸터 -->
+                <div class="footer">
+                    <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
+                    <p>문의: 구매계약기획그룹 | © POSCO E&C</p>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+    msg = MIMEMultipart()
+    msg['From'] = EMAIL_SENDER
+    msg['To'] = EMAIL_RECEIVERS
+    msg['Subject'] = subject
+    msg.attach(MIMEText(full_html, 'html'))
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
+        server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
+        server.quit()
+        print(f"📧 발송 성공: {len(receivers)}명에게 전송 완료.")
+    except Exception as e:
+        print(f"❌ 발송 실패: {e}")
+
+if __name__ == "__main__":
+    if not GOOGLE_API_KEY:
+        print("❌ API Key가 설정되지 않았습니다.")
+    else:
+        items = fetch_news()
+        if items:
+            report_html = generate_report(items)
+            if report_html:
+                send_email(report_html)
+            else:
+                print("❌ 리포트 생성 실패")
+        else:
+            print("수집된 뉴스가 없습니다.")
