@@ -3,7 +3,6 @@ import smtplib
 import feedparser
 import time
 import urllib.parse
-import re
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
@@ -71,12 +70,11 @@ def is_recent(published_str):
         return True
 
 def fetch_news():
-    """RSS 뉴스 수집 (스크랩 제거로 속도 향상)"""
+    """RSS 뉴스 수집"""
     news_items = []
     print("🔍 뉴스 수집 시작...")
     
     for keyword in KEYWORDS:
-        # 검색어 뒤에 '-주식 -종목' 등을 붙여서 구글 검색 단계에서도 1차 필터링
         negative_query = " -주식 -종목 -테마 -특징주"
         encoded_query = urllib.parse.quote(f"{keyword}{negative_query} when:1d")
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
@@ -88,7 +86,6 @@ def fetch_news():
 
             for entry in feed.entries[:3]:
                 if is_recent(entry.published):
-                    # 2차 필터링: 제목에 금지어 포함 여부 확인
                     if is_stock_noise(entry.title):
                         continue
 
@@ -107,7 +104,7 @@ def fetch_news():
     return news_items
 
 def generate_report(news_items):
-    """Gemini AI 리포트 (와이드 레이아웃 및 디자인 최적화)"""
+    """Gemini AI 리포트 (PC 최적화 + Table 레이아웃 적용)"""
     if not news_items: return None
     
     kst_now = get_korea_time()
@@ -120,46 +117,49 @@ def generate_report(news_items):
 
         news_text = ""
         for idx, item in enumerate(news_items):
-            # 링크를 포함하여 AI에게 전달
             news_text += f"[{idx+1}] {item['title']} (키워드: {item['keyword']}) | Link: {item['link']}\n"
 
-        # 프롬프트 수정: 와이드 레이아웃에 맞춘 큼직한 디자인 요청
+        # 프롬프트: 디자인 가이드라인 강화 (Table 구조 및 word-break 필수)
         prompt = f"""
         오늘은 {today_formatted}입니다.
         당신은 **포스코이앤씨 구매계약실**의 수석 애널리스트입니다.
-        아래 뉴스들을 바탕으로 경영진 및 실무자가 PC에서 보기 편한 'Daily Market & Risk Briefing' 이메일을 작성하세요.
-
+        
         [뉴스 목록]
         {news_text}
 
         [작성 원칙]
-        1. **날짜 준수**: 반드시 오늘 날짜({today_formatted})를 기준으로 작성하세요.
-        2. **주식/투자 배제**: 건설 테마주, 주가 등락 내용은 절대 포함하지 마세요.
-        3. **구매계약실 관점**: 계약, 납기, 단가, 법적 리스크 위주로 분석하세요.
+        1. **날짜 준수**: 반드시 오늘 날짜({today_formatted})를 기준으로 작성.
+        2. **주식/투자 배제**: 건설 테마주, 주가 등락 내용 절대 포함 금지.
+        3. **상세 요약**: 육하원칙에 따라 3~4문장으로 구체적으로 작성.
 
-        [보고서 형식 (HTML Style - Wide Layout)]
-        - **절대** `<html>`, `<head>`, `<body>` 태그를 쓰지 마세요. `<div>`로 시작하는 본문 내용만 작성하세요.
-        - **디자인 컨셉**: 시원시원한 여백, 큰 폰트, 명확한 구분선.
-        - **링크**: 제목에 링크를 걸지 말고, 우측 하단이나 별도 라인에 '🔗 원문 보기' 버튼을 배치하세요.
+        [보고서 형식 (HTML Style - Premium Layout)]
+        - `<div>`, `<table>` 등 Body 내부 태그로만 작성.
+        - **디자인 핵심**: 모든 텍스트 스타일에 `word-break: keep-all;`을 반드시 포함하여 한글 단어가 중간에 끊기지 않게 하세요.
         
         [HTML 구조 가이드]
-        1. **시장 날씨 요약 (Executive Summary)**: 
-           `<div style="background-color: #f1f8ff; padding: 25px; border-radius: 4px; margin-bottom: 40px; border: 1px solid #cce5ff;">`
-           - 제목: `<h3>` 태그로 "Today's Market Weather" 작성.
-           - 내용: ☀️/☁️/☔ 아이콘과 함께 시장 요약 1~2문장을 16px 크기로 작성.
+        1. **시장 날씨 (Hero Section)**: 
+           `<div style="background-color: #eaf4fc; padding: 30px; border-radius: 12px; margin-bottom: 40px; border: 1px solid #dbeafe; word-break: keep-all;">`
+           - 제목: `<h2 style="margin:0 0 15px 0; color:#0054a6; font-size:22px;">🌤️ Today's Market Weather</h2>`
+           - 내용: 시장 요약 1~2문장 (font-size: 18px, line-height: 1.6).
         
         2. **카테고리 섹션**: 
-           `[규제/리스크]`, `[자재/시황]`, `[글로벌/물류]` 등 섹션 제목을 `<h2>` 태그로 작성.
-           - 스타일: `color: #0054a6; border-bottom: 2px solid #0054a6; padding-bottom: 10px; margin-top: 40px; margin-bottom: 20px; font-size: 22px;`
+           - 섹션 제목: `<h3 style="font-size: 24px; color: #111; margin: 50px 0 20px 0; border-left: 5px solid #0054a6; padding-left: 15px;">[카테고리명]</h3>`
         
-        3. **기사 카드 (Wide Card)**:
-           각 기사는 아래 스타일을 적용하세요:
-           `<div style="background-color: #ffffff; border-bottom: 1px solid #eeeeee; padding: 25px 0; margin-bottom: 0;">`
+        3. **기사 카드 (Card UI)**:
+           각 기사는 아래 스타일을 엄격히 적용:
+           `<div style="background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 25px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">`
            
-           - **제목**: `<div style="font-size: 20px; font-weight: bold; color: #222; margin-bottom: 12px; line-height: 1.4;">제목</div>`
-           - **내용**: `<div style="font-size: 16px; color: #555; line-height: 1.7; margin-bottom: 15px;">기사 핵심 요약 내용...</div>`
-           - **인사이트 박스**: `<div style="background-color: #f8f9fa; padding: 15px; border-left: 4px solid #0054a6; font-size: 15px; color: #333; margin-bottom: 15px;"><strong>💡 Insight:</strong> 구매계약실 대응 방안...</div>`
-           - **버튼**: `<div style="text-align: right;"><a href="..." style="display: inline-block; background-color: #f1f3f5; color: #495057; padding: 8px 16px; text-decoration: none; border-radius: 4px; font-size: 14px; font-weight: 600; border: 1px solid #dee2e6;">🔗 기사 원문 보기</a></div>`
+           - **제목**: `<div style="font-size: 22px; font-weight: 700; color: #101828; margin-bottom: 15px; line-height: 1.4; word-break: keep-all;">제목</div>`
+           - **내용**: `<div style="font-size: 17px; color: #475467; line-height: 1.8; margin-bottom: 20px; word-break: keep-all;">핵심 요약(3~4문장)...</div>`
+           
+           - **인사이트 (Table 구조 사용 - 레이아웃 깨짐 방지)**:
+             `<table style="background-color: #f0f9ff; border: 1px solid #bce3ff; border-radius: 8px; width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px;">`
+             `<tr>`
+             `<td style="padding: 15px 5px 15px 20px; width: 1%; white-space: nowrap; vertical-align: top; color: #0054a6; font-weight: bold; font-size: 16px;">💡 Insight:</td>`
+             `<td style="padding: 15px 20px 15px 5px; color: #004080; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all;">구매계약실 대응 방안...</td>`
+             `</tr></table>`
+             
+           - **버튼**: `<div style="text-align: right;"><a href="..." style="display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">🔗 원문 기사 보기</a></div>`
         """
         
         response = model.generate_content(prompt)
@@ -169,29 +169,28 @@ def generate_report(news_items):
         return None
 
 def send_email(html_body):
-    """이메일 발송 (PC 최적화 와이드 레이아웃 적용)"""
+    """이메일 발송 (PC 최적화: 850px 와이드 레이아웃)"""
     if not html_body: return
 
     kst_now = get_korea_time()
     today_str = kst_now.strftime("%Y년 %m월 %d일")
     subject = f"[Daily] {today_str} 구매계약실 시장 동향 보고"
     
-    # 이메일 클라이언트를 위한 인라인 스타일이 적용된 HTML 템플릿 (Width 800px)
     full_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
     <meta charset="utf-8">
     <style>
-        body {{ font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; color: #333; background-color: #f4f4f4; margin: 0; padding: 0; }}
-        .email-wrapper {{ width: 100%; background-color: #f4f4f4; padding: 20px 0; }}
-        .email-container {{ max-width: 800px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
-        .header {{ background-color: #0054a6; color: #ffffff; padding: 30px 40px; }}
-        .header h1 {{ margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }}
-        .header-sub {{ font-size: 16px; margin-top: 10px; opacity: 0.9; font-weight: 500; }}
-        .content {{ padding: 40px; }}
-        .intro-text {{ margin-bottom: 40px; font-size: 18px; color: #444; border-bottom: 1px solid #eee; padding-bottom: 20px; }}
-        .footer {{ background-color: #333333; padding: 30px; text-align: center; font-size: 14px; color: #bbbbbb; }}
+        body {{ font-family: 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }}
+        .email-wrapper {{ width: 100%; background-color: #f2f4f7; padding: 50px 0; }}
+        .email-container {{ max-width: 850px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }}
+        .header {{ background-color: #0054a6; color: #ffffff; padding: 40px 50px; }}
+        .header h1 {{ margin: 0; font-size: 32px; font-weight: 800; letter-spacing: -0.5px; }}
+        .header-sub {{ font-size: 18px; margin-top: 10px; opacity: 0.9; font-weight: 500; }}
+        .content {{ padding: 50px; background-color: #ffffff; }}
+        .intro-text {{ margin-bottom: 50px; font-size: 18px; color: #344054; padding-bottom: 30px; border-bottom: 1px solid #eaecf0; word-break: keep-all; }}
+        .footer {{ background-color: #101828; padding: 40px; text-align: center; font-size: 14px; color: #98a2b3; }}
         .footer p {{ margin: 5px 0; }}
     </style>
     </head>
@@ -210,7 +209,7 @@ def send_email(html_body):
                 <div class="content">
                     <div class="intro-text">
                         안녕하십니까, 구매계약실 여러분.<br>
-                        <strong>{today_str}</strong> 주요 시장 이슈와 리스크 요인을 정리해 드립니다.
+                        <strong>{today_str}</strong> 주요 시장 이슈와 리스크 요인을 보고드립니다.
                     </div>
                     
                     {html_body}
@@ -219,7 +218,7 @@ def send_email(html_body):
                 <!-- 푸터 -->
                 <div class="footer">
                     <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
-                    <p>문의: 구매기획 그룹 | © POSCO E&C</p>
+                    <p>문의: 구매계약기획그룹 | © POSCO E&C</p>
                 </div>
             </div>
         </div>
@@ -251,7 +250,6 @@ if __name__ == "__main__":
         items = fetch_news()
         if items:
             report_html = generate_report(items)
-            
             if report_html:
                 send_email(report_html)
             else:
