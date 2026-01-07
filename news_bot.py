@@ -3,6 +3,7 @@ import smtplib
 import feedparser
 import time
 import urllib.parse
+import random # 이스터에그 랜덤 확률을 위해 추가
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
@@ -34,7 +35,6 @@ KEYWORDS = [
     "건설 동반성장 상생"
 ]
 
-# [수정] 건설과 무관한 노이즈(식품, 유통 등) 및 주식 키워드 차단 강화
 EXCLUDE_KEYWORDS = [
     "특징주", "테마주", "관련주", "주가", "급등", "급락", "상한가", "하한가",
     "거래량", "매수", "매도", "목표가", "체결", "증시", "종목", "투자자",
@@ -121,10 +121,9 @@ def generate_report(news_items):
         for idx, item in enumerate(news_items):
             placeholder = f"__LINK_{idx}__"
             link_map[placeholder] = item['link']
-            # 뉴스 목록 제공 시 [제목]과 [Link]가 한 쌍임을 명확히 전달
-            news_text += f"[{idx+1}] 제목: {item['title']} | LinkID: {placeholder}\n"
+            news_text += f"[{idx+1}] {item['title']} (키워드: {item['keyword']}) | Link: {placeholder}\n"
 
-        # 프롬프트: 링크 정합성 유지 강조
+        # 프롬프트: 리스크 등급별 색상 지정 강화 및 링크 정합성 유지
         prompt = f"""
         오늘은 {today_formatted}입니다.
         당신은 **포스코이앤씨 구매계약실**의 수석 애널리스트입니다.
@@ -136,11 +135,7 @@ def generate_report(news_items):
         1. **날짜 준수**: 반드시 오늘 날짜({today_formatted})를 기준으로 작성.
         2. **주식/투자 배제**: 건설 테마주, 주가 등락 내용 절대 포함 금지.
         3. **구조**: 각 카테고리별로 가장 중요한 1~2개 기사는 '상세 카드(Deep Dive)'로 작성하고, 나머지 관련 기사는 하단에 '단신 리스트(Headlines)'로 모아서 정리.
-        
-        [🚨 중요: 링크 정합성 절대 준수]
-        - 기사의 제목과 링크(`__LINK_N__`)는 반드시 위 [뉴스 목록]에 있는 **원래 짝꿍끼리만** 연결해야 합니다.
-        - **절대로** A기사 제목에 B기사 링크를 붙이지 마세요.
-        - 제목을 임의로 창작하지 말고, 목록에 있는 제목을 그대로(또는 다듬어서) 사용하세요.
+        4. **링크 규칙 (절대 준수)**: 뉴스 목록의 `__LINK_N__`을 사용하여 기사 제목이나 버튼에 링크를 거세요.
 
         [보고서 형식 (HTML Style)]
         - `<div>`, `<table>`, `<ul>`, `<li>` 등 Body 내부 태그로만 작성.
@@ -150,19 +145,33 @@ def generate_report(news_items):
         1. **시장 날씨 (Hero Section)**: 
            `<div style="background-color: #eaf4fc; padding: 30px; border-radius: 12px; margin-bottom: 40px; border: 1px solid #dbeafe; word-break: keep-all;">`
            - 제목: `<h2 style="margin:0 0 15px 0; color:#0054a6; font-size:22px;">🌤️ Today's Market Weather</h2>`
-           - 내용: 시장 요약 1~2문장.
+           - 내용: 시장 요약 1~2문장 (font-size: 18px, line-height: 1.6).
         
         2. **카테고리 섹션**: 
            - 섹션 제목: `<h3 style="font-size: 24px; color: #111; margin: 50px 0 20px 0; border-left: 5px solid #0054a6; padding-left: 15px;">[카테고리명]</h3>`
         
         3. **상세 기사 카드 (중요 기사 1~2개)**:
            `<div style="background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 25px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">`
-           - 제목, 내용(상세 요약), 인사이트(Table) 작성.
-           - 버튼: `<div style="text-align: right;"><a href="LinkID" style="display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">🔗 원문 기사 보기</a></div>`
+           - 제목: `<div style="font-size: 22px; font-weight: 700; color: #101828; margin-bottom: 15px; line-height: 1.4; word-break: keep-all;">제목</div>`
+           - 내용: `<div style="font-size: 17px; color: #475467; line-height: 1.8; margin-bottom: 20px; word-break: keep-all;">핵심 요약...</div>`
+           
+           - **인사이트 (리스크 등급별 색상 자동 적용)**:
+             기사 내용을 분석하여 3단계(Critical/Warning/Info) 중 하나로 판단하고, 해당 스타일을 적용하세요.
+             
+             * **🔴 Critical (심각 - 파업, 셧다운, 급등):** 배경색 `#fdecea`, 텍스트색 `#d32f2f`
+             * **🟠 Warning (주의 - 인상 예고, 법안 발의):** 배경색 `#fff4e5`, 텍스트색 `#ed6c02`
+             * **🔵 Info (참고 - 일반 동향):** 배경색 `#f0f9ff`, 텍스트색 `#0288d1`
+
+             `<table style="background-color: [판단된 등급의 배경색]; border-radius: 8px; width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px;">`
+             `<tr>`
+             `<td style="padding: 15px 5px 15px 20px; width: 1%; white-space: nowrap; vertical-align: top; color: [판단된 등급의 텍스트색]; font-weight: bold; font-size: 16px;">💡 Insight:</td>`
+             `<td style="padding: 15px 20px 15px 5px; color: [판단된 등급의 텍스트색]; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all;">구매계약실 대응 방안...</td>`
+             `</tr></table>`
+             
+           - 버튼: `<div style="text-align: right;"><a href="__LINK_N__" style="display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">🔗 원문 기사 보기</a></div>`
            
         4. **📌 관련 주요 단신 (Headlines List - 카테고리 마지막에 추가)**:
            상세 카드로 다루지 않은 나머지 뉴스들을 아래 스타일로 리스트업하세요.
-           (반드시 LinkID가 일치하는 제목과 함께 사용)
            
            `<div style="background-color: #f8f9fa; border-top: 2px solid #0054a6; padding: 20px 25px; margin-top: 10px; margin-bottom: 40px;">`
            `<div style="font-size: 16px; font-weight: 700; color: #0054a6; margin-bottom: 15px;">📌 관련 주요 단신 (Headlines)</div>`
@@ -170,7 +179,7 @@ def generate_report(news_items):
            
            `<!-- 리스트 아이템 반복 -->`
            `<li style="margin-bottom: 8px; font-size: 15px; color: #555;">`
-           `<a href="LinkID" style="text-decoration: none; color: #333;">기사 제목 (클릭 시 이동)</a>`
+           `<a href="__LINK_N__" style="text-decoration: none; color: #333;">기사 제목 (클릭 시 이동)</a>`
            `</li>`
            
            `</ul></div>`
@@ -194,6 +203,33 @@ def send_email(html_body):
     today_str = kst_now.strftime("%Y년 %m월 %d일")
     subject = f"[Daily] {today_str} 구매계약실 시장 동향 보고"
     
+    # [이스터에그 준비] 20% 확률로 생성
+    easter_egg_css = ""
+    easter_egg_html = ""
+    
+    if random.random() < 0.2: # 20% 당첨 확률
+        easter_egg_css = """
+        .easter-egg { 
+            margin-top: 30px; 
+            font-size: 11px; 
+            color: #f2f4f7; /* 배경색과 같게 숨김 */
+            cursor: help; 
+            transition: all 0.5s ease;
+            text-align: center;
+            letter-spacing: 1px;
+        }
+        .easter-egg:hover { 
+            color: #ff6b6b; /* 호버 시 색상 등장 */
+            transform: scale(1.05);
+            font-weight: bold;
+        }
+        """
+        easter_egg_html = """
+        <div class="easter-egg">
+            오? 저를 발견하셨군요! 연락주시면 커피 한잔 사드릴께요 ☕ (Developed by You)
+        </div>
+        """
+
     full_html = f"""
     <!DOCTYPE html>
     <html>
@@ -210,6 +246,8 @@ def send_email(html_body):
         .intro-text {{ margin-bottom: 50px; font-size: 18px; color: #344054; padding-bottom: 30px; border-bottom: 1px solid #eaecf0; word-break: keep-all; }}
         .footer {{ background-color: #101828; padding: 40px; text-align: center; font-size: 14px; color: #98a2b3; }}
         .footer p {{ margin: 5px 0; }}
+        
+        {easter_egg_css} /* 이스터에그 CSS 주입 */
     </style>
     </head>
     <body>
@@ -237,6 +275,7 @@ def send_email(html_body):
                 <div class="footer">
                     <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
                     <p>문의: 구매계약기획그룹 | © POSCO E&C</p>
+                    {easter_egg_html} <!-- 이스터에그 HTML 주입 -->
                 </div>
             </div>
         </div>
