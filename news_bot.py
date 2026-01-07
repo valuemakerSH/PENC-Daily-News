@@ -34,10 +34,12 @@ KEYWORDS = [
     "건설 동반성장 상생"
 ]
 
+# [수정] 건설과 무관한 노이즈(식품, 유통 등) 및 주식 키워드 차단 강화
 EXCLUDE_KEYWORDS = [
     "특징주", "테마주", "관련주", "주가", "급등", "급락", "상한가", "하한가",
     "거래량", "매수", "매도", "목표가", "체결", "증시", "종목", "투자자",
-    "지수", "코스피", "코스닥", "마감"
+    "지수", "코스피", "코스닥", "마감",
+    "치킨", "맥주", "식품", "마트", "백화점", "여행", "게임", "화장품" # 타 산업군 제외
 ]
 
 def get_korea_time():
@@ -119,9 +121,10 @@ def generate_report(news_items):
         for idx, item in enumerate(news_items):
             placeholder = f"__LINK_{idx}__"
             link_map[placeholder] = item['link']
-            news_text += f"[{idx+1}] {item['title']} (키워드: {item['keyword']}) | Link: {placeholder}\n"
+            # 뉴스 목록 제공 시 [제목]과 [Link]가 한 쌍임을 명확히 전달
+            news_text += f"[{idx+1}] 제목: {item['title']} | LinkID: {placeholder}\n"
 
-        # 프롬프트: 주요 단신 리스트 추가 + 링크 오류 방지 + 디자인
+        # 프롬프트: 링크 정합성 유지 강조
         prompt = f"""
         오늘은 {today_formatted}입니다.
         당신은 **포스코이앤씨 구매계약실**의 수석 애널리스트입니다.
@@ -133,7 +136,11 @@ def generate_report(news_items):
         1. **날짜 준수**: 반드시 오늘 날짜({today_formatted})를 기준으로 작성.
         2. **주식/투자 배제**: 건설 테마주, 주가 등락 내용 절대 포함 금지.
         3. **구조**: 각 카테고리별로 가장 중요한 1~2개 기사는 '상세 카드(Deep Dive)'로 작성하고, 나머지 관련 기사는 하단에 '단신 리스트(Headlines)'로 모아서 정리.
-        4. **링크 규칙 (절대 준수)**: 뉴스 목록의 `__LINK_N__`을 사용하여 기사 제목이나 버튼에 링크를 거세요.
+        
+        [🚨 중요: 링크 정합성 절대 준수]
+        - 기사의 제목과 링크(`__LINK_N__`)는 반드시 위 [뉴스 목록]에 있는 **원래 짝꿍끼리만** 연결해야 합니다.
+        - **절대로** A기사 제목에 B기사 링크를 붙이지 마세요.
+        - 제목을 임의로 창작하지 말고, 목록에 있는 제목을 그대로(또는 다듬어서) 사용하세요.
 
         [보고서 형식 (HTML Style)]
         - `<div>`, `<table>`, `<ul>`, `<li>` 등 Body 내부 태그로만 작성.
@@ -143,26 +150,19 @@ def generate_report(news_items):
         1. **시장 날씨 (Hero Section)**: 
            `<div style="background-color: #eaf4fc; padding: 30px; border-radius: 12px; margin-bottom: 40px; border: 1px solid #dbeafe; word-break: keep-all;">`
            - 제목: `<h2 style="margin:0 0 15px 0; color:#0054a6; font-size:22px;">🌤️ Today's Market Weather</h2>`
-           - 내용: 시장 요약 1~2문장 (font-size: 18px, line-height: 1.6).
+           - 내용: 시장 요약 1~2문장.
         
         2. **카테고리 섹션**: 
            - 섹션 제목: `<h3 style="font-size: 24px; color: #111; margin: 50px 0 20px 0; border-left: 5px solid #0054a6; padding-left: 15px;">[카테고리명]</h3>`
         
         3. **상세 기사 카드 (중요 기사 1~2개)**:
            `<div style="background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 25px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">`
-           - 제목: `<div style="font-size: 22px; font-weight: 700; color: #101828; margin-bottom: 15px; line-height: 1.4; word-break: keep-all;">제목</div>`
-           - 내용: `<div style="font-size: 17px; color: #475467; line-height: 1.8; margin-bottom: 20px; word-break: keep-all;">핵심 요약...</div>`
-           
-           - 인사이트(Table - 등급별 색상): 
-             Critical(#fdecea/#d32f2f), Warning(#fff4e5/#ed6c02), Info(#f0f9ff/#0288d1)
-             `<table style="background-color: [배경색]; border-radius: 8px; width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px;">`
-             `<tr><td style="padding: 15px 5px 15px 20px; width: 1%; white-space: nowrap; vertical-align: top; color: [텍스트색]; font-weight: bold; font-size: 16px;">💡 Insight:</td>`
-             `<td style="padding: 15px 20px 15px 5px; color: [텍스트색]; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all;">대응 방안...</td></tr></table>`
-             
-           - 버튼: `<div style="text-align: right;"><a href="__LINK_N__" style="display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">🔗 원문 기사 보기</a></div>`
+           - 제목, 내용(상세 요약), 인사이트(Table) 작성.
+           - 버튼: `<div style="text-align: right;"><a href="LinkID" style="display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">🔗 원문 기사 보기</a></div>`
            
         4. **📌 관련 주요 단신 (Headlines List - 카테고리 마지막에 추가)**:
            상세 카드로 다루지 않은 나머지 뉴스들을 아래 스타일로 리스트업하세요.
+           (반드시 LinkID가 일치하는 제목과 함께 사용)
            
            `<div style="background-color: #f8f9fa; border-top: 2px solid #0054a6; padding: 20px 25px; margin-top: 10px; margin-bottom: 40px;">`
            `<div style="font-size: 16px; font-weight: 700; color: #0054a6; margin-bottom: 15px;">📌 관련 주요 단신 (Headlines)</div>`
@@ -170,7 +170,7 @@ def generate_report(news_items):
            
            `<!-- 리스트 아이템 반복 -->`
            `<li style="margin-bottom: 8px; font-size: 15px; color: #555;">`
-           `<a href="__LINK_N__" style="text-decoration: none; color: #333;">기사 제목 (클릭 시 이동)</a>`
+           `<a href="LinkID" style="text-decoration: none; color: #333;">기사 제목 (클릭 시 이동)</a>`
            `</li>`
            
            `</ul></div>`
