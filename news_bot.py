@@ -17,7 +17,6 @@ EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
 EMAIL_RECEIVERS = os.environ.get("EMAIL_RECEIVERS")
 
 # --- 설정: 키워드 및 카테고리 매핑 ---
-# Python이 직접 카테고리를 분류하여 AI의 변덕을 차단합니다.
 CATEGORY_MAP = {
     "자재/시황": [
         "건설 원자재 가격", "건설 자재 환율 유가", "납품대금 연동제 건설"
@@ -38,11 +37,18 @@ CATEGORY_MAP = {
 # 키워드 리스트 생성 (검색용)
 KEYWORDS = [k for category in CATEGORY_MAP.values() for k in category]
 
+# [수정] 도박, 성인, 스팸, 타 산업군 키워드 차단 강화
 EXCLUDE_KEYWORDS = [
+    # 주식/투자
     "특징주", "테마주", "관련주", "주가", "급등", "급락", "상한가", "하한가",
     "거래량", "매수", "매도", "목표가", "체결", "증시", "종목", "투자자",
     "지수", "코스피", "코스닥", "마감",
-    "치킨", "맥주", "식품", "마트", "백화점", "여행", "게임", "화장품"
+    # 타 산업군 (노이즈)
+    "치킨", "맥주", "식품", "마트", "백화점", "여행", "게임", "화장품", "뷰티", "패션",
+    # 도박/성인/스팸 (메일 필터링 방지)
+    "카지노", "바카라", "토토", "슬롯", "홀덤", "포커", "도박", "배팅", "잭팟",
+    "룰렛", "블랙잭", "성인", "만남", "출장", "마사지", "대출", "금리인하요구권",
+    "코인", "비트코인", "가상화폐", "리딩방"
 ]
 
 def get_korea_time():
@@ -50,7 +56,8 @@ def get_korea_time():
     kst_now = utc_now + timedelta(hours=9)
     return kst_now
 
-def is_stock_noise(title):
+def is_spam_news(title):
+    """제목에 스팸/도박/주식 등 금지어가 있는지 검사"""
     for bad_word in EXCLUDE_KEYWORDS:
         if bad_word in title: return True
     return False
@@ -94,7 +101,7 @@ def fetch_news():
                 if valid_count >= 10: break 
 
                 if is_recent(entry.published):
-                    if is_stock_noise(entry.title): continue
+                    if is_spam_news(entry.title): continue # 스팸 필터링
 
                     if not any(item['link'] == entry.link for item in news_items):
                         news_items.append({
