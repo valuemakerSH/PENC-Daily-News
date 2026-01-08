@@ -37,15 +37,12 @@ CATEGORY_MAP = {
 # 키워드 리스트 생성 (검색용)
 KEYWORDS = [k for category in CATEGORY_MAP.values() for k in category]
 
-# [수정] 도박, 성인, 스팸, 타 산업군 키워드 차단 강화
+# 불필요한 노이즈 차단
 EXCLUDE_KEYWORDS = [
-    # 주식/투자
     "특징주", "테마주", "관련주", "주가", "급등", "급락", "상한가", "하한가",
     "거래량", "매수", "매도", "목표가", "체결", "증시", "종목", "투자자",
     "지수", "코스피", "코스닥", "마감",
-    # 타 산업군 (노이즈)
-    "치킨", "맥주", "식품", "마트", "백화점", "여행", "게임", "화장품", "뷰티", "패션",
-    # 도박/성인/스팸 (메일 필터링 방지)
+    "치킨", "맥주", "식품", "마트", "백화점", "여행", "게임", "화장품",
     "카지노", "바카라", "토토", "슬롯", "홀덤", "포커", "도박", "배팅", "잭팟",
     "룰렛", "블랙잭", "성인", "만남", "출장", "마사지", "대출", "금리인하요구권",
     "코인", "비트코인", "가상화폐", "리딩방"
@@ -57,7 +54,6 @@ def get_korea_time():
     return kst_now
 
 def is_spam_news(title):
-    """제목에 스팸/도박/주식 등 금지어가 있는지 검사"""
     for bad_word in EXCLUDE_KEYWORDS:
         if bad_word in title: return True
     return False
@@ -77,7 +73,6 @@ def is_recent(published_str):
         return True
 
 def get_category(keyword):
-    """키워드를 기반으로 카테고리를 찾아주는 함수"""
     for cat, keywords in CATEGORY_MAP.items():
         if keyword in keywords:
             return cat
@@ -97,19 +92,19 @@ def fetch_news():
             if not feed.entries and hasattr(feed, 'bozo_exception'): pass
 
             valid_count = 0
-            for entry in feed.entries[:20]: # 넉넉히 검토
+            for entry in feed.entries[:20]: 
                 if valid_count >= 10: break 
 
                 if is_recent(entry.published):
-                    if is_spam_news(entry.title): continue # 스팸 필터링
+                    if is_spam_news(entry.title): continue
 
                     if not any(item['link'] == entry.link for item in news_items):
                         news_items.append({
-                            "id": len(news_items), # 고유 ID 부여
+                            "id": len(news_items),
                             "title": entry.title,
                             "link": entry.link,
                             "keyword": keyword,
-                            "category": get_category(keyword), # 카테고리 자동 할당
+                            "category": get_category(keyword),
                             "date": entry.published
                         })
                         valid_count += 1
@@ -121,10 +116,6 @@ def fetch_news():
     return news_items
 
 def generate_analysis_data(news_items):
-    """
-    AI에게는 '분석'만 시키고, '데이터(JSON)'만 받습니다.
-    HTML 조립은 Python이 하므로 레이아웃이 깨지거나 링크가 섞일 일이 없습니다.
-    """
     if not news_items: return None
     
     kst_now = get_korea_time()
@@ -135,7 +126,6 @@ def generate_analysis_data(news_items):
         genai.configure(api_key=GOOGLE_API_KEY)
         model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
 
-        # AI에게 줄 뉴스 목록 (ID 포함)
         news_text = ""
         for item in news_items:
             news_text += f"ID:{item['id']} | [{item['category']}] {item['title']}\n"
@@ -176,15 +166,11 @@ def generate_analysis_data(news_items):
         return None
 
 def build_html_report(ai_data, news_items):
-    """Python이 직접 HTML을 조립 (레이아웃 및 링크 완벽 제어)"""
-    
     kst_now = get_korea_time()
     today_str = kst_now.strftime("%Y년 %m월 %d일")
 
-    # 1. AI가 선택한 카드 정보 매핑
     selected_map = {item['id']: item for item in ai_data['selected_cards']}
     
-    # 2. 카테고리별 뉴스 그룹핑
     grouped_news = {cat: [] for cat in CATEGORY_MAP.keys()}
     grouped_news["기타"] = []
     
@@ -195,7 +181,6 @@ def build_html_report(ai_data, news_items):
         else:
             grouped_news["기타"].append(item)
 
-    # 3. HTML 생성
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -206,37 +191,46 @@ def build_html_report(ai_data, news_items):
         .header {{ background-color: #0054a6; color: #ffffff; padding: 40px 50px; }}
         .content {{ padding: 50px; }}
         
-        /* 날씨 섹션 */
         .weather-box {{ background-color: #eaf4fc; padding: 25px; border-radius: 12px; margin-bottom: 50px; border: 1px solid #dbeafe; }}
         .weather-title {{ margin: 0 0 10px 0; color: #0054a6; font-size: 20px; font-weight: 700; }}
         
-        /* 카테고리 제목 */
         .cat-title {{ font-size: 22px; color: #111; margin: 60px 0 20px 0; border-left: 5px solid #0054a6; padding-left: 15px; font-weight: 700; }}
         
-        /* 상세 카드 */
         .card {{ background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }}
         .card-title {{ font-size: 20px; font-weight: 700; color: #101828; margin-bottom: 12px; line-height: 1.4; word-break: keep-all; }}
         .card-body {{ font-size: 16px; color: #475467; line-height: 1.7; margin-bottom: 20px; word-break: keep-all; }}
         
-        /* 인사이트 테이블 */
         .insight-table {{ width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px; border-radius: 8px; }}
         .insight-label {{ padding: 15px; width: 1%; white-space: nowrap; vertical-align: top; font-weight: 700; font-size: 15px; }}
         .insight-text {{ padding: 15px; font-size: 15px; line-height: 1.6; vertical-align: top; word-break: keep-all; }}
         
-        /* 리스크 색상 */
         .risk-Critical {{ background-color: #fdecea; color: #d32f2f; }}
         .risk-Warning {{ background-color: #fff4e5; color: #ed6c02; }}
         .risk-Info {{ background-color: #f0f9ff; color: #0288d1; }}
         
-        /* 버튼 */
         .btn {{ display: inline-block; background-color: #fff; color: #344054; border: 1px solid #d0d5dd; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; }}
         
-        /* 단신 리스트 */
         .headline-box {{ background-color: #f9fafb; padding: 20px; border-radius: 8px; margin-top: 10px; }}
         .headline-title {{ font-size: 15px; font-weight: 700; color: #667085; margin-bottom: 10px; }}
         .headline-item {{ margin-bottom: 8px; font-size: 14px; color: #555; list-style: none; }}
         .headline-link {{ text-decoration: none; color: #4b5563; transition: color 0.2s; word-break: keep-all; }}
         .headline-link:hover {{ color: #0054a6; text-decoration: underline; }}
+
+        /* 이스터에그 스타일 (배경색과 동일하게 숨김 처리) */
+        .easter-egg {
+            margin-top: 30px;
+            font-size: 11px;
+            color: #101828; /* 푸터 배경색과 동일하게 설정하여 숨김 */
+            cursor: help;
+            transition: all 0.5s ease;
+            text-align: center;
+            letter-spacing: 1px;
+        }
+        .easter-egg:hover {
+            color: #ff6b6b; /* 마우스 오버 시 색상 등장 */
+            transform: scale(1.05);
+            font-weight: bold;
+        }
     </style>
     </head>
     <body>
@@ -246,28 +240,23 @@ def build_html_report(ai_data, news_items):
                 <div style="margin-top:10px; opacity:0.9;">POSCO E&C 구매계약실 | {today_str}</div>
             </div>
             <div class="content">
-                <!-- 시장 날씨 -->
                 <div class="weather-box">
                     <h2 class="weather-title">🌤️ Today's Market Weather</h2>
                     <div style="font-size: 17px;">{ai_data.get('weather_summary', '시장 분석 데이터 없음')}</div>
                 </div>
     """
 
-    # 4. 카테고리별 루프 (순서대로 출력)
     for cat_name, items in grouped_news.items():
-        if not items: continue # 기사 없는 카테고리는 생략
+        if not items: continue
 
         html += f'<div class="cat-title">[{cat_name}]</div>'
         
-        # 4-1. 상세 카드 (Deep Dive)
-        # 해당 카테고리 뉴스 중 AI가 선택한 것이 있으면 카드로 출력
-        card_count = 0
+        # 상세 카드
         for item in items:
             if item['id'] in selected_map:
                 ai_info = selected_map[item['id']]
                 risk_level = ai_info.get('risk_level', 'Info')
                 
-                # 색상 설정
                 bg_color = "#f0f9ff"
                 text_color = "#0288d1"
                 if risk_level == 'Critical': 
@@ -291,10 +280,8 @@ def build_html_report(ai_data, news_items):
                     </div>
                 </div>
                 """
-                card_count += 1
         
-        # 4-2. 관련 단신 리스트 (Headlines)
-        # 선택되지 않은 나머지 기사들
+        # 단신 리스트
         headlines = [item for item in items if item['id'] not in selected_map]
         
         if headlines:
@@ -311,11 +298,14 @@ def build_html_report(ai_data, news_items):
                 """
             html += "</ul></div>"
 
-    # 푸터
+    # 푸터 (수정됨)
     html += """
-                <div style="margin-top: 60px; text-align: center; color: #98a2b3; font-size: 13px; border-top: 1px solid #eee; padding-top: 20px;">
+                <div style="background-color: #101828; padding: 40px; text-align: center; color: #98a2b3; font-size: 14px;">
                     <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
-                    <p>문의: 구매계약기획그룹 | © POSCO E&C</p>
+                    <p>문의: 구매계약기획그룹 송승호 프로 | © POSCO E&C</p>
+                    <div class="easter-egg">
+                        오? 저를 발견하셨군요! 연락주시면 커피 한잔 사드릴께요 ☕
+                    </div>
                 </div>
             </div>
         </div>
