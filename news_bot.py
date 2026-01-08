@@ -3,7 +3,8 @@ import smtplib
 import feedparser
 import time
 import urllib.parse
-import random 
+import json # JSON 처리를 위한 모듈 추가
+import re
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
@@ -39,7 +40,7 @@ EXCLUDE_KEYWORDS = [
     "특징주", "테마주", "관련주", "주가", "급등", "급락", "상한가", "하한가",
     "거래량", "매수", "매도", "목표가", "체결", "증시", "종목", "투자자",
     "지수", "코스피", "코스닥", "마감",
-    "치킨", "맥주", "식품", "마트", "백화점", "여행", "게임", "화장품" 
+    "치킨", "맥주", "식품", "마트", "백화점", "여행", "게임", "화장품"
 ]
 
 def get_korea_time():
@@ -81,7 +82,6 @@ def fetch_news():
             feed = feedparser.parse(url)
             if not feed.entries and hasattr(feed, 'bozo_exception'): pass
 
-            # 수집량 넉넉하게 (키워드당 최대 10개)
             valid_count = 0
             for entry in feed.entries[:20]: 
                 if valid_count >= 10: break 
@@ -104,98 +104,198 @@ def fetch_news():
     print(f"✅ 총 {len(news_items)}개의 최신 뉴스 수집 완료.")
     return news_items
 
-def generate_report(news_items):
-    """Gemini AI 리포트 (Deep Dive만 AI가, 리스트는 Python이)"""
+def generate_report_content(news_items):
+    """
+    Gemini AI에게 JSON 데이터만 요청하고, 
+    HTML 조립은 Python이 수행하여 링크 오류를 원천 차단함.
+    """
     if not news_items: return None
     
     kst_now = get_korea_time()
     today_formatted = kst_now.strftime("%Y년 %m월 %d일") 
     
-    print("🧠 AI 분석 시작...")
+    print("🧠 AI 분석 시작 (JSON 모드)...")
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
         model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
 
+        # 뉴스 리스트를 텍스트로 변환 (인덱스 ID 부여)
         news_text = ""
-        link_map = {}
-        
         for idx, item in enumerate(news_items):
-            placeholder = f"__LINK_{idx}__"
-            link_map[placeholder] = item['link']
-            # AI에게 제공하는 목록
-            news_text += f"[{idx+1}] {item['title']} (키워드: {item['keyword']}) | LinkID: {placeholder}\n"
+            news_text += f"ID[{idx}] {item['title']} (키워드: {item['keyword']})\n"
 
         prompt = f"""
         오늘은 {today_formatted}입니다.
-        당신은 **포스코이앤씨 구매계약실**의 수석 애널리스트입니다.
+        당신은 포스코이앤씨 구매계약실의 수석 애널리스트입니다.
         
         [뉴스 목록]
         {news_text}
 
-        [작성 원칙]
-        1. **역할**: 위 뉴스 목록 중 가장 중요하고 파급력이 큰 이슈 **3~5개**를 선정하여 심층 분석(Deep Dive) 하세요.
-        2. **제외**: 선정하지 않은 나머지 뉴스들에 대한 리스트는 작성하지 마세요. (시스템이 자동으로 붙일 예정입니다)
-        3. **날짜 준수**: 반드시 오늘 날짜({today_formatted})를 기준으로 작성.
-        4. **링크 규칙**: 뉴스 목록의 `__LINK_N__`을 사용하여 기사 제목이나 버튼에 링크를 거세요.
+        [임무]
+        위 뉴스 목록을 분석하여 구매 업무에 가장 중요한 이슈 3~5개를 선정하고, JSON 형식으로 출력하세요.
+        
+        [필수 JSON 구조]
+        {{
+            "weather_summary": "시장 날씨 요약 (1~2문장, 날씨 아이콘 포함)",
+            "selected_news": [
+                {{
+                    "id": 뉴스ID(숫자),
+                    "category": "카테고리명 (예: 자재/시황, 공급망/물류)",
+                    "summary": "핵심 요약 (육하원칙, 3~4문장)",
+                    "insight": "구매계약실 대응 방안 (2문장)",
+                    "risk_level": "Critical 또는 Warning 또는 Info"
+                }}
+            ]
+        }}
 
-        [보고서 형식 (HTML Style)]
-        - `<div>`, `<table>`, `<ul>`, `<li>` 등 Body 내부 태그로만 작성.
-        - **디자인 핵심**: `word-break: keep-all;` 필수 적용.
-        
-        [HTML 구조 가이드]
-        1. **시장 날씨 (Hero Section)**: (기존과 동일)
-        
-        2. **카테고리 섹션**: 
-           - 섹션 제목: `<h3 style="font-size: 24px; color: #111; margin: 50px 0 20px 0; border-left: 5px solid #0054a6; padding-left: 15px;">[카테고리명]</h3>`
-        
-        3. **상세 기사 카드 (Deep Dive)**:
-           `<div style="background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 25px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">`
-           - 제목: `<div style="font-size: 22px; font-weight: 700; color: #101828; margin-bottom: 15px; line-height: 1.4; word-break: keep-all;">제목</div>`
-           - 내용: `<div style="font-size: 17px; color: #475467; line-height: 1.8; margin-bottom: 20px; word-break: keep-all;">핵심 요약...</div>`
-           
-           - 인사이트(Table): 
-             `<table style="background-color: [배경색]; border-radius: 8px; width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px;">`
-             `<tr>`
-             `<td style="padding: 15px 5px 15px 20px; width: 1%; white-space: nowrap; vertical-align: top; color: [텍스트색]; font-weight: bold; font-size: 16px;">💡 Insight:</td>`
-             `<td style="padding: 15px 20px 15px 5px; color: [텍스트색]; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all;">대응 방안...</td>`
-             `</tr></table>`
-             
-           - 버튼: `<div style="text-align: right;"><a href="__LINK_N__" style="display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600;">🔗 원문 기사 보기</a></div>`
+        [주의사항]
+        1. `id`는 위 목록의 `ID[]` 안에 있는 숫자와 정확히 일치해야 합니다. (이것으로 링크를 연결합니다)
+        2. 오직 표준 JSON 형식만 출력하세요. 마크다운 태그(```json)는 사용하지 마세요.
         """
         
         response = model.generate_content(prompt)
-        ai_html = response.text.replace("```html", "").replace("```", "")
+        # 마크다운 태그 제거 및 파싱
+        clean_json = response.text.replace("```json", "").replace("```", "").strip()
+        data = json.loads(clean_json)
         
-        # 1. AI가 만든 본문 내 링크 치환
-        for placeholder, real_url in link_map.items():
-            ai_html = ai_html.replace(placeholder, real_url)
-            
-        # 2. [Python 생성] 전체 뉴스 리스트 붙이기 (링크 오류 0%)
-        # AI가 놓쳤거나 선택하지 않은 뉴스까지 포함하여 전체를 하단에 리스트업
-        full_list_html = """
-        <div style="background-color: #f8f9fa; border-top: 2px solid #0054a6; padding: 30px; margin-top: 50px;">
-            <div style="font-size: 18px; font-weight: 700; color: #0054a6; margin-bottom: 20px;">📌 금일 수집된 전체 뉴스 목록 (Reference)</div>
-            <ul style="margin: 0; padding-left: 20px;">
-        """
-        
-        for item in news_items:
-            # 안전하게 Python 변수에서 직접 제목과 링크를 가져옴
-            full_list_html += f"""
-            <li style="margin-bottom: 10px; font-size: 15px; color: #555; line-height: 1.5;">
-                <span style="display:inline-block; background:#e9ecef; color:#495057; font-size:11px; padding:2px 6px; border-radius:4px; margin-right:5px; vertical-align:middle;">{item['keyword']}</span>
-                <a href="{item['link']}" style="text-decoration: none; color: #333; word-break: keep-all;" target="_blank">{item['title']}</a>
-            </li>
-            """
-        
-        full_list_html += "</ul></div>"
-        
-        # 최종 합체
-        final_html = ai_html + full_list_html
-        return final_html
+        return data
 
     except Exception as e:
-        print(f"❌ AI 분석 중 오류: {e}")
+        print(f"❌ AI 분석/파싱 중 오류: {e}")
         return None
+
+def build_html_email(data, news_items):
+    """AI가 준 데이터(JSON)와 원본 뉴스(List)를 결합하여 HTML 생성"""
+    
+    # 1. 스타일 정의 (PC 최적화 + Card UI)
+    style_block = """
+    <style>
+        body { font-family: 'Pretendard', 'Malgun Gothic', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }
+        .email-wrapper { width: 100%; background-color: #f2f4f7; padding: 40px 0; }
+        .email-container { max-width: 850px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .header { background-color: #0054a6; color: #ffffff; padding: 40px 50px; }
+        .header h1 { margin: 0; font-size: 28px; font-weight: 700; }
+        .content { padding: 50px; }
+        .weather-section { background-color: #eaf4fc; padding: 30px; border-radius: 12px; margin-bottom: 40px; border: 1px solid #dbeafe; word-break: keep-all; }
+        .news-card { background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 30px; box-shadow: 0 2px 5px rgba(0,0,0,0.03); }
+        .news-title { font-size: 22px; font-weight: 700; color: #101828; margin-bottom: 15px; line-height: 1.4; word-break: keep-all; }
+        .news-body { font-size: 17px; color: #475467; line-height: 1.8; margin-bottom: 20px; word-break: keep-all; }
+        .insight-table { width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px; border-radius: 8px; }
+        .insight-label { padding: 15px 5px 15px 20px; width: 1%; white-space: nowrap; vertical-align: top; font-weight: bold; font-size: 16px; }
+        .insight-content { padding: 15px 20px 15px 5px; font-size: 16px; line-height: 1.6; vertical-align: top; word-break: keep-all; }
+        .link-btn { display: inline-block; background-color: #ffffff; color: #344054; border: 1px solid #d0d5dd; padding: 10px 18px; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600; }
+        
+        /* 리스크 색상 */
+        .risk-Critical { background-color: #fdecea; color: #d32f2f; }
+        .risk-Warning  { background-color: #fff4e5; color: #ed6c02; }
+        .risk-Info     { background-color: #f0f9ff; color: #0288d1; }
+        
+        /* 단신 리스트 */
+        .headline-box { background-color: #f8f9fa; border-top: 2px solid #0054a6; padding: 30px; margin-top: 20px; }
+        .headline-item { margin-bottom: 12px; font-size: 15px; color: #555; }
+        .headline-link { text-decoration: none; color: #333; transition: color 0.2s; }
+        .headline-link:hover { color: #0054a6; text-decoration: underline; }
+    </style>
+    """
+
+    kst_now = get_korea_time()
+    today_str = kst_now.strftime("%Y년 %m월 %d일")
+
+    # 2. 본문 조립
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8">{style_block}</head>
+    <body>
+        <div class="email-wrapper">
+            <div class="email-container">
+                <div class="header">
+                    <h1>Daily Market & Risk Briefing</h1>
+                    <div style="font-size: 16px; opacity: 0.9; margin-top: 10px;">POSCO E&C 구매계약실 | {today_str}</div>
+                </div>
+                
+                <div class="content">
+                    <div class="weather-section">
+                        <h2 style="margin:0 0 15px 0; color:#0054a6; font-size:22px;">🌤️ Today's Market Weather</h2>
+                        <div style="font-size: 18px;">{data['weather_summary']}</div>
+                    </div>
+    """
+
+    # 3. 주요 이슈 카드 생성 (AI 선택)
+    selected_ids = []
+    
+    for card in data['selected_news']:
+        idx = card['id']
+        # ID 유효성 체크
+        if idx >= len(news_items): continue
+        
+        original_item = news_items[idx]
+        selected_ids.append(idx)
+        
+        # 리스크 등급에 따른 스타일 선택
+        risk_class = f"risk-{card.get('risk_level', 'Info')}"
+        
+        # 텍스트 컬러 설정 (배경색에 맞춤)
+        text_color = "#0288d1" # 기본 Info
+        if card.get('risk_level') == 'Critical': text_color = "#d32f2f"
+        elif card.get('risk_level') == 'Warning': text_color = "#ed6c02"
+
+        html += f"""
+        <div class="news-card">
+            <div style="color: #0054a6; font-weight: 700; margin-bottom: 10px; font-size: 14px;">[{card['category']}]</div>
+            <div class="news-title">{original_item['title']}</div>
+            <div class="news-body">{card['summary']}</div>
+            
+            <table class="insight-table {risk_class}">
+                <tr>
+                    <td class="insight-label" style="color: {text_color};">💡 Insight:</td>
+                    <td class="insight-content" style="color: {text_color};">{card['insight']}</td>
+                </tr>
+            </table>
+            
+            <div style="text-align: right;">
+                <a href="{original_item['link']}" class="link-btn" target="_blank">🔗 원문 기사 보기</a>
+            </div>
+        </div>
+        """
+
+    # 4. 나머지 단신 리스트 생성 (Python 자동 생성)
+    html += """
+        <div class="headline-box">
+            <div style="font-size: 18px; font-weight: 700; color: #0054a6; margin-bottom: 20px;">📌 금일 전체 뉴스 목록 (Reference)</div>
+            <ul style="padding-left: 20px; margin: 0;">
+    """
+    
+    for idx, item in enumerate(news_items):
+        # 이미 카드뉴스에 나온 기사는 제외하고 싶으면 아래 주석 해제
+        # if idx in selected_ids: continue
+        
+        html += f"""
+            <li class="headline-item">
+                <span style="background:#e9ecef; color:#495057; font-size:11px; padding:2px 6px; border-radius:4px; margin-right:6px; vertical-align:middle;">{item['keyword']}</span>
+                <a href="{item['link']}" class="headline-link" target="_blank">{item['title']}</a>
+            </li>
+        """
+
+    html += """
+            </ul>
+        </div>
+    """
+
+    # 5. 푸터 및 닫기
+    html += """
+                </div>
+                <div style="background-color: #101828; padding: 40px; text-align: center; color: #98a2b3; font-size: 14px;">
+                    <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
+                    <p>문의: 구매계약기획그룹 | © POSCO E&C</p>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return html
 
 def send_email(html_body):
     if not html_body: return
@@ -203,82 +303,12 @@ def send_email(html_body):
     kst_now = get_korea_time()
     today_str = kst_now.strftime("%Y년 %m월 %d일")
     subject = f"[Daily] {today_str} 구매계약실 시장 동향 보고"
-    
-    # [이스터에그] 20% 확률
-    easter_egg_css = ""
-    easter_egg_html = ""
-    if random.random() < 0.2: 
-        easter_egg_css = """
-        .easter-egg { 
-            margin-top: 30px; font-size: 11px; color: #f2f4f7; cursor: help; 
-            transition: all 0.5s ease; text-align: center; letter-spacing: 1px;
-        }
-        .easter-egg:hover { color: #ff6b6b; transform: scale(1.05); font-weight: bold; }
-        """
-        easter_egg_html = """
-        <div class="easter-egg">
-            오? 저를 발견하셨군요! 연락주시면 커피 한잔 사드릴께요 ☕ (Developed by You)
-        </div>
-        """
-
-    full_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <meta charset="utf-8">
-    <style>
-        body {{ font-family: 'Pretendard', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }}
-        .email-wrapper {{ width: 100%; background-color: #f2f4f7; padding: 50px 0; }}
-        .email-container {{ max-width: 850px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); }}
-        .header {{ background-color: #0054a6; color: #ffffff; padding: 40px 50px; }}
-        .header h1 {{ margin: 0; font-size: 32px; font-weight: 800; letter-spacing: -0.5px; }}
-        .header-sub {{ font-size: 18px; margin-top: 10px; opacity: 0.9; font-weight: 500; }}
-        .content {{ padding: 50px; background-color: #ffffff; }}
-        .intro-text {{ margin-bottom: 50px; font-size: 18px; color: #344054; padding-bottom: 30px; border-bottom: 1px solid #eaecf0; word-break: keep-all; }}
-        .footer {{ background-color: #101828; padding: 40px; text-align: center; font-size: 14px; color: #98a2b3; }}
-        .footer p {{ margin: 5px 0; }}
-        
-        {easter_egg_css}
-    </style>
-    </head>
-    <body>
-        <div class="email-wrapper">
-            <div class="email-container">
-                <!-- 헤더 -->
-                <div class="header">
-                    <h1>Daily Market & Risk Briefing</h1>
-                    <div class="header-sub">
-                        POSCO E&C 구매계약실 | {today_str}
-                    </div>
-                </div>
-                
-                <!-- 본문 -->
-                <div class="content">
-                    <div class="intro-text">
-                        안녕하십니까, 구매계약실 여러분.<br>
-                        <strong>{today_str}</strong> 주요 시장 이슈와 리스크 요인을 보고드립니다.
-                    </div>
-                    
-                    {html_body}
-                </div>
-                
-                <!-- 푸터 -->
-                <div class="footer">
-                    <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
-                    <p>문의: 구매계약기획그룹 | © POSCO E&C</p>
-                    {easter_egg_html}
-                </div>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
 
     msg = MIMEMultipart()
     msg['From'] = EMAIL_SENDER
     msg['To'] = EMAIL_RECEIVERS
     msg['Subject'] = subject
-    msg.attach(MIMEText(full_html, 'html'))
+    msg.attach(MIMEText(html_body, 'html'))
 
     try:
         server = smtplib.SMTP('smtp.gmail.com', 587)
@@ -297,10 +327,13 @@ if __name__ == "__main__":
     else:
         items = fetch_news()
         if items:
-            report_html = generate_report(items)
-            if report_html:
-                send_email(report_html)
+            # 1. AI에게 JSON 데이터 요청
+            ai_data = generate_report_content(items)
+            if ai_data:
+                # 2. Python이 HTML 조립 (링크 매칭 보장)
+                final_html = build_html_email(ai_data, items)
+                send_email(final_html)
             else:
-                print("❌ 리포트 생성 실패")
+                print("❌ AI 응답 실패")
         else:
             print("수집된 뉴스가 없습니다.")
