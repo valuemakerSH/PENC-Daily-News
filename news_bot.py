@@ -217,7 +217,7 @@ def build_html_report(ai_data, news_items):
         .headline-link:hover {{ color: #0054a6; text-decoration: underline; }}
 
         /* 이스터에그 스타일 (배경색과 동일하게 숨김 처리) */
-        .easter-egg {
+        .easter-egg {{
             margin-top: 30px;
             font-size: 11px;
             color: #101828; /* 푸터 배경색과 동일하게 설정하여 숨김 */
@@ -225,12 +225,12 @@ def build_html_report(ai_data, news_items):
             transition: all 0.5s ease;
             text-align: center;
             letter-spacing: 1px;
-        }
-        .easter-egg:hover {
+        }}
+        .easter-egg:hover {{
             color: #ff6b6b; /* 마우스 오버 시 색상 등장 */
             transform: scale(1.05);
             font-weight: bold;
-        }
+        }}
     </style>
     </head>
     <body>
