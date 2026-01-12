@@ -346,8 +346,7 @@ def send_email(html_body):
         
         receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
         
-        # [수정] 15명씩 분할 발송 (Batch 15)
-        # 17명까지 성공 경험 반영하여 15명으로 설정, 대기 시간은 30초로 안전하게 유지
+        # [수정] 15명씩 분할 발송, 60초 대기
         batch_size = 15
         total_sent = 0
         
@@ -355,8 +354,8 @@ def send_email(html_body):
             batch = receivers[i:i + batch_size]
             server.sendmail(EMAIL_SENDER, batch, msg.as_string())
             total_sent += len(batch)
-            print(f"📧 {total_sent}/{len(receivers)}명 발송 완료... (보안 쿨타임 30초 대기)")
-            time.sleep(30) 
+            print(f"📧 {total_sent}/{len(receivers)}명 발송 완료... (보안 쿨타임 60초 대기)")
+            time.sleep(60) 
             
         server.quit()
         print(f"✅ 총 {total_sent}명에게 발송 완료.")
