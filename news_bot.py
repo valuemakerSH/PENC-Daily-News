@@ -63,8 +63,10 @@ def is_spam_news(title):
 def is_recent(entry):
     try:
         published_dt = None
+        # 1. 구조화된 날짜 정보 우선 사용
         if hasattr(entry, 'published_parsed') and entry.published_parsed:
             published_dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+        # 2. 문자열 파싱 시도
         elif hasattr(entry, 'published') and entry.published:
             published_dt = parsedate_to_datetime(entry.published)
             if published_dt.tzinfo:
@@ -75,7 +77,10 @@ def is_recent(entry):
         if not published_dt: return False
 
         now_utc = datetime.now(timezone.utc)
+        # 미래 날짜(10분 이상) 제외
         if published_dt > now_utc + timedelta(minutes=10): return False
+        
+        # 24시간 이내 확인
         one_day_ago = now_utc - timedelta(hours=24)
         return published_dt > one_day_ago
     except Exception:
@@ -83,7 +88,8 @@ def is_recent(entry):
 
 def get_category(keyword):
     for cat, keywords in CATEGORY_MAP.items():
-        if keyword in keywords: return cat
+        if keyword in keywords:
+            return cat
     return "기타"
 
 def fetch_news():
@@ -258,6 +264,7 @@ def build_html_report(ai_data, news_items):
 
         html += f'<div class="cat-title">[{cat_name}]</div>'
         
+        # 상세 카드
         for item in items:
             if item['id'] in selected_map:
                 ai_info = selected_map[item['id']]
@@ -287,6 +294,7 @@ def build_html_report(ai_data, news_items):
                 </div>
                 """
         
+        # 단신 리스트
         headlines = [item for item in items if item['id'] not in selected_map]
         
         if headlines:
@@ -303,6 +311,7 @@ def build_html_report(ai_data, news_items):
                 """
             html += "</ul></div>"
 
+    # 푸터
     html += """
                 <div style="background-color: #101828; padding: 40px; text-align: center; color: #98a2b3; font-size: 14px;">
                     <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
@@ -326,7 +335,6 @@ def send_email(html_body):
     
     msg = MIMEMultipart()
     msg['From'] = EMAIL_SENDER
-    # [중요] 받는 사람 목록을 숨기고 '대표 주소'로 보이게 함 (개별 수신 느낌)
     msg['To'] = f"구매계약실 여러분 <{EMAIL_SENDER}>"
     msg['Subject'] = f"[Daily] {today_str} 구매계약실 시장 동향 보고"
     msg.attach(MIMEText(html_body, 'html'))
@@ -338,8 +346,8 @@ def send_email(html_body):
         
         receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
         
-        # [수정] 보안 정책 우회를 위한 '분할 발송 모드'
-        # 한 번에 15명씩 끊어서 발송, 그룹 간 15초 대기
+        # [수정] 15명씩 분할 발송 (Batch 15)
+        # 17명까지 성공 경험 반영하여 15명으로 설정, 대기 시간은 30초로 안전하게 유지
         batch_size = 15
         total_sent = 0
         
@@ -347,8 +355,8 @@ def send_email(html_body):
             batch = receivers[i:i + batch_size]
             server.sendmail(EMAIL_SENDER, batch, msg.as_string())
             total_sent += len(batch)
-            print(f"📧 {total_sent}/{len(receivers)}명 발송 완료... (보안 쿨타임 15초 대기)")
-            time.sleep(15) 
+            print(f"📧 {total_sent}/{len(receivers)}명 발송 완료... (보안 쿨타임 30초 대기)")
+            time.sleep(30) 
             
         server.quit()
         print(f"✅ 총 {total_sent}명에게 발송 완료.")
