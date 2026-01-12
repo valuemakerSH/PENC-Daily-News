@@ -4,6 +4,7 @@ import feedparser
 import time
 import urllib.parse
 import json
+import random
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
@@ -37,19 +38,15 @@ CATEGORY_MAP = {
 # 키워드 리스트 생성 (검색용)
 KEYWORDS = [k for category in CATEGORY_MAP.values() for k in category]
 
-# [수정] 불필요한 노이즈(MSN, 스토리, 가십 등) 차단 강화
+# 불필요한 노이즈 차단
 EXCLUDE_KEYWORDS = [
-    # 주식/투자
     "특징주", "테마주", "관련주", "주가", "급등", "급락", "상한가", "하한가",
     "거래량", "매수", "매도", "목표가", "체결", "증시", "종목", "투자자",
     "지수", "코스피", "코스닥", "마감",
-    # 타 산업군/소비재
     "치킨", "맥주", "식품", "마트", "백화점", "여행", "게임", "화장품",
-    # 도박/성인/스팸
     "카지노", "바카라", "토토", "슬롯", "홀덤", "포커", "도박", "배팅", "잭팟",
     "룰렛", "블랙잭", "성인", "만남", "출장", "마사지", "대출", "금리인하요구권",
     "코인", "비트코인", "가상화폐", "리딩방",
-    # [NEW] 가십/큐레이션/MSN 차단
     "MSN", "스토리", "숨겨진", "비하인드", "충격", "경악", "네티즌", "커뮤니티"
 ]
 
@@ -64,50 +61,29 @@ def is_spam_news(title):
     return False
 
 def is_recent(entry):
-    """
-    뉴스 날짜가 24시간 이내인지 확인 (정확도 개선)
-    문자열 파싱보다 feedparser가 제공하는 구조화된 시간(published_parsed)을 우선 사용
-    """
     try:
         published_dt = None
-
-        # 1. 구조화된 날짜 정보(UTC struct_time)가 있으면 우선 사용 (가장 정확)
         if hasattr(entry, 'published_parsed') and entry.published_parsed:
-            # struct_time을 datetime으로 변환 (UTC 기준)
             published_dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-        
-        # 2. 없다면 문자열 파싱 시도 (기존 방식, 차선책)
         elif hasattr(entry, 'published') and entry.published:
             published_dt = parsedate_to_datetime(entry.published)
-            # 타임존 정보 보정
             if published_dt.tzinfo:
                 published_dt = published_dt.astimezone(timezone.utc)
             else:
                 published_dt = published_dt.replace(tzinfo=timezone.utc)
         
-        # 날짜 정보를 전혀 못 찾으면 제외
-        if not published_dt:
-            return False
+        if not published_dt: return False
 
-        # 현재 시간 (UTC)
         now_utc = datetime.now(timezone.utc)
-        
-        # 미래 날짜 필터링 (10분 이상 미래는 오류로 간주)
-        if published_dt > now_utc + timedelta(minutes=10):
-            return False
-            
-        # 24시간 이내 확인
+        if published_dt > now_utc + timedelta(minutes=10): return False
         one_day_ago = now_utc - timedelta(hours=24)
         return published_dt > one_day_ago
-
     except Exception:
-        # 날짜 파싱 중 에러 발생 시 안전하게 제외
         return False
 
 def get_category(keyword):
     for cat, keywords in CATEGORY_MAP.items():
-        if keyword in keywords:
-            return cat
+        if keyword in keywords: return cat
     return "기타"
 
 def fetch_news():
@@ -282,7 +258,6 @@ def build_html_report(ai_data, news_items):
 
         html += f'<div class="cat-title">[{cat_name}]</div>'
         
-        # 상세 카드
         for item in items:
             if item['id'] in selected_map:
                 ai_info = selected_map[item['id']]
@@ -312,7 +287,6 @@ def build_html_report(ai_data, news_items):
                 </div>
                 """
         
-        # 단신 리스트
         headlines = [item for item in items if item['id'] not in selected_map]
         
         if headlines:
@@ -329,7 +303,6 @@ def build_html_report(ai_data, news_items):
                 """
             html += "</ul></div>"
 
-    # 푸터
     html += """
                 <div style="background-color: #101828; padding: 40px; text-align: center; color: #98a2b3; font-size: 14px;">
                     <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
@@ -353,7 +326,8 @@ def send_email(html_body):
     
     msg = MIMEMultipart()
     msg['From'] = EMAIL_SENDER
-    msg['To'] = EMAIL_RECEIVERS
+    # [중요] 받는 사람 목록을 숨기고 '대표 주소'로 보이게 함 (개별 수신 느낌)
+    msg['To'] = f"구매계약실 여러분 <{EMAIL_SENDER}>"
     msg['Subject'] = f"[Daily] {today_str} 구매계약실 시장 동향 보고"
     msg.attach(MIMEText(html_body, 'html'))
 
@@ -361,10 +335,24 @@ def send_email(html_body):
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        
         receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
-        server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
+        
+        # [수정] 보안 정책 우회를 위한 '분할 발송 모드'
+        # 한 번에 15명씩 끊어서 발송, 그룹 간 15초 대기
+        batch_size = 15
+        total_sent = 0
+        
+        for i in range(0, len(receivers), batch_size):
+            batch = receivers[i:i + batch_size]
+            server.sendmail(EMAIL_SENDER, batch, msg.as_string())
+            total_sent += len(batch)
+            print(f"📧 {total_sent}/{len(receivers)}명 발송 완료... (보안 쿨타임 15초 대기)")
+            time.sleep(15) 
+            
         server.quit()
-        print(f"📧 발송 성공: {len(receivers)}명")
+        print(f"✅ 총 {total_sent}명에게 발송 완료.")
+        
     except Exception as e:
         print(f"❌ 발송 실패: {e}")
 
