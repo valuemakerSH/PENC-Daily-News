@@ -37,15 +37,20 @@ CATEGORY_MAP = {
 # 키워드 리스트 생성 (검색용)
 KEYWORDS = [k for category in CATEGORY_MAP.values() for k in category]
 
-# 불필요한 노이즈 차단
+# [수정] 불필요한 노이즈(MSN, 스토리, 가십 등) 차단 강화
 EXCLUDE_KEYWORDS = [
+    # 주식/투자
     "특징주", "테마주", "관련주", "주가", "급등", "급락", "상한가", "하한가",
     "거래량", "매수", "매도", "목표가", "체결", "증시", "종목", "투자자",
     "지수", "코스피", "코스닥", "마감",
+    # 타 산업군/소비재
     "치킨", "맥주", "식품", "마트", "백화점", "여행", "게임", "화장품",
+    # 도박/성인/스팸
     "카지노", "바카라", "토토", "슬롯", "홀덤", "포커", "도박", "배팅", "잭팟",
     "룰렛", "블랙잭", "성인", "만남", "출장", "마사지", "대출", "금리인하요구권",
-    "코인", "비트코인", "가상화폐", "리딩방"
+    "코인", "비트코인", "가상화폐", "리딩방",
+    # [NEW] 가십/큐레이션/MSN 차단
+    "MSN", "스토리", "숨겨진", "비하인드", "충격", "경악", "네티즌", "커뮤니티"
 ]
 
 def get_korea_time():
@@ -122,7 +127,6 @@ def fetch_news():
             for entry in feed.entries[:20]: 
                 if valid_count >= 10: break 
 
-                # [수정] entry 객체 전체를 넘겨서 정밀하게 날짜 검사
                 if is_recent(entry):
                     if is_spam_news(entry.title): continue
 
@@ -236,7 +240,6 @@ def build_html_report(ai_data, news_items):
         .risk-Warning {{ background-color: #fff4e5; color: #ed6c02; }}
         .risk-Info {{ background-color: #f0f9ff; color: #0288d1; }}
         
-        /* 버튼 스타일 수정: 새 창 열기 및 보안 속성 추가 */
         .btn {{ display: inline-block; background-color: #fff; color: #344054; border: 1px solid #d0d5dd; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }}
         
         .headline-box {{ background-color: #f9fafb; padding: 20px; border-radius: 8px; margin-top: 10px; }}
