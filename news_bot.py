@@ -58,19 +58,46 @@ def is_spam_news(title):
         if bad_word in title: return True
     return False
 
-def is_recent(published_str):
-    if not published_str: return False
+def is_recent(entry):
+    """
+    뉴스 날짜가 24시간 이내인지 확인 (정확도 개선)
+    문자열 파싱보다 feedparser가 제공하는 구조화된 시간(published_parsed)을 우선 사용
+    """
     try:
-        pub_date = parsedate_to_datetime(published_str)
-        if pub_date.tzinfo:
-            pub_date = pub_date.astimezone(timezone.utc)
-        else:
-            pub_date = pub_date.replace(tzinfo=timezone.utc)
+        published_dt = None
+
+        # 1. 구조화된 날짜 정보(UTC struct_time)가 있으면 우선 사용 (가장 정확)
+        if hasattr(entry, 'published_parsed') and entry.published_parsed:
+            # struct_time을 datetime으로 변환 (UTC 기준)
+            published_dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+        
+        # 2. 없다면 문자열 파싱 시도 (기존 방식, 차선책)
+        elif hasattr(entry, 'published') and entry.published:
+            published_dt = parsedate_to_datetime(entry.published)
+            # 타임존 정보 보정
+            if published_dt.tzinfo:
+                published_dt = published_dt.astimezone(timezone.utc)
+            else:
+                published_dt = published_dt.replace(tzinfo=timezone.utc)
+        
+        # 날짜 정보를 전혀 못 찾으면 제외
+        if not published_dt:
+            return False
+
+        # 현재 시간 (UTC)
         now_utc = datetime.now(timezone.utc)
+        
+        # 미래 날짜 필터링 (10분 이상 미래는 오류로 간주)
+        if published_dt > now_utc + timedelta(minutes=10):
+            return False
+            
+        # 24시간 이내 확인
         one_day_ago = now_utc - timedelta(hours=24)
-        return pub_date > one_day_ago
-    except:
-        return True
+        return published_dt > one_day_ago
+
+    except Exception:
+        # 날짜 파싱 중 에러 발생 시 안전하게 제외
+        return False
 
 def get_category(keyword):
     for cat, keywords in CATEGORY_MAP.items():
@@ -95,7 +122,8 @@ def fetch_news():
             for entry in feed.entries[:20]: 
                 if valid_count >= 10: break 
 
-                if is_recent(entry.published):
+                # [수정] entry 객체 전체를 넘겨서 정밀하게 날짜 검사
+                if is_recent(entry):
                     if is_spam_news(entry.title): continue
 
                     if not any(item['link'] == entry.link for item in news_items):
@@ -208,26 +236,26 @@ def build_html_report(ai_data, news_items):
         .risk-Warning {{ background-color: #fff4e5; color: #ed6c02; }}
         .risk-Info {{ background-color: #f0f9ff; color: #0288d1; }}
         
-        .btn {{ display: inline-block; background-color: #fff; color: #344054; border: 1px solid #d0d5dd; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; }}
+        /* 버튼 스타일 수정: 새 창 열기 및 보안 속성 추가 */
+        .btn {{ display: inline-block; background-color: #fff; color: #344054; border: 1px solid #d0d5dd; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }}
         
         .headline-box {{ background-color: #f9fafb; padding: 20px; border-radius: 8px; margin-top: 10px; }}
         .headline-title {{ font-size: 15px; font-weight: 700; color: #667085; margin-bottom: 10px; }}
         .headline-item {{ margin-bottom: 8px; font-size: 14px; color: #555; list-style: none; }}
-        .headline-link {{ text-decoration: none; color: #4b5563; transition: color 0.2s; word-break: keep-all; }}
+        .headline-link {{ text-decoration: none; color: #4b5563; transition: color 0.2s; word-break: keep-all; cursor: pointer; }}
         .headline-link:hover {{ color: #0054a6; text-decoration: underline; }}
 
-        /* 이스터에그 스타일 (배경색과 동일하게 숨김 처리) */
         .easter-egg {{
             margin-top: 30px;
             font-size: 11px;
-            color: #101828; /* 푸터 배경색과 동일하게 설정하여 숨김 */
+            color: #101828;
             cursor: help;
             transition: all 0.5s ease;
             text-align: center;
             letter-spacing: 1px;
         }}
         .easter-egg:hover {{
-            color: #ff6b6b; /* 마우스 오버 시 색상 등장 */
+            color: #ff6b6b;
             transform: scale(1.05);
             font-weight: bold;
         }}
@@ -276,7 +304,7 @@ def build_html_report(ai_data, news_items):
                         </tr>
                     </table>
                     <div style="text-align: right;">
-                        <a href="{item['link']}" class="btn" target="_blank">🔗 원문 기사 보기</a>
+                        <a href="{item['link']}" class="btn" target="_blank" rel="noopener noreferrer">🔗 원문 기사 보기</a>
                     </div>
                 </div>
                 """
@@ -293,12 +321,12 @@ def build_html_report(ai_data, news_items):
             for h_item in headlines:
                 html += f"""
                 <li class="headline-item">
-                    <a href="{h_item['link']}" class="headline-link" target="_blank">{h_item['title']}</a>
+                    <a href="{h_item['link']}" class="headline-link" target="_blank" rel="noopener noreferrer">{h_item['title']}</a>
                 </li>
                 """
             html += "</ul></div>"
 
-    # 푸터 (수정됨)
+    # 푸터
     html += """
                 <div style="background-color: #101828; padding: 40px; text-align: center; color: #98a2b3; font-size: 14px;">
                     <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
