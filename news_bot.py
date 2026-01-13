@@ -86,7 +86,8 @@ def is_recent(entry):
 
 def get_category(keyword):
     for cat, keywords in CATEGORY_MAP.items():
-        if keyword in keywords: return cat
+        if keyword in keywords:
+            return cat
     return "기타"
 
 def fetch_news():
@@ -330,10 +331,10 @@ def send_email(html_body):
     kst_now = get_korea_time()
     today_str = kst_now.strftime("%Y년 %m월 %d일")
     
-    # MIME 객체 생성 (한 번만 생성해서 재사용)
     msg = MIMEMultipart()
     msg['From'] = EMAIL_SENDER
-    msg['To'] = f"구매계약실 여러분 <{EMAIL_SENDER}>" # BCC 효과를 위해 수신자 숨김
+    # [BCC 효과] 받는 사람은 '구매계약실 여러분'으로 보임
+    msg['To'] = f"구매계약실 여러분 <{EMAIL_SENDER}>"
     msg['Subject'] = f"[Daily] {today_str} 구매계약실 시장 동향 보고"
     msg.attach(MIMEText(html_body, 'html'))
 
@@ -344,26 +345,12 @@ def send_email(html_body):
         
         receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
         
-        # [복구] 15명씩 분할 발송, 60초 대기
-        batch_size = 15
-        total_sent = 0
+        # [복구] 일괄 전송 (한 번의 연결로 42명 전송)
+        # 보안 필터(Greylisting)에 걸리더라도, 이후 재시도나 지연 배달로 모두 도착함
+        server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
         
-        for i in range(0, len(receivers), batch_size):
-            batch = receivers[i:i + batch_size]
-            
-            # Envelope에만 수신자 목록 포함
-            server.sendmail(EMAIL_SENDER, batch, msg.as_string())
-            
-            total_sent += len(batch)
-            print(f"📧 Batch {i//batch_size + 1} 발송 완료 ({len(batch)}명).")
-            
-            # 마지막 배치가 아니면 대기
-            if i + batch_size < len(receivers):
-                print("⏳ 보안 쿨타임 60초 대기 중...")
-                time.sleep(60) 
-            
         server.quit()
-        print(f"✅ 총 {total_sent}명에게 발송 완료.")
+        print(f"✅ 총 {len(receivers)}명에게 일괄 발송 완료.")
         
     except Exception as e:
         print(f"❌ 발송 실패: {e}")
