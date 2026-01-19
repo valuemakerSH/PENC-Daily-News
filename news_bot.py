@@ -5,6 +5,7 @@ import time
 import urllib.parse
 import json
 import random
+import difflib # [추가] 제목 유사도 검사를 위한 라이브러리
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
@@ -35,10 +36,8 @@ CATEGORY_MAP = {
     ]
 }
 
-# 키워드 리스트 생성 (검색용)
 KEYWORDS = [k for category in CATEGORY_MAP.values() for k in category]
 
-# 불필요한 노이즈 차단
 EXCLUDE_KEYWORDS = [
     "특징주", "테마주", "관련주", "주가", "급등", "급락", "상한가", "하한가",
     "거래량", "매수", "매도", "목표가", "체결", "증시", "종목", "투자자",
@@ -63,10 +62,8 @@ def is_spam_news(title):
 def is_recent(entry):
     try:
         published_dt = None
-        # 1. 구조화된 날짜 정보(UTC struct_time)가 있으면 우선 사용 (가장 정확)
         if hasattr(entry, 'published_parsed') and entry.published_parsed:
             published_dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-        # 2. 없다면 문자열 파싱 시도 (기존 방식)
         elif hasattr(entry, 'published') and entry.published:
             published_dt = parsedate_to_datetime(entry.published)
             if published_dt.tzinfo:
@@ -86,9 +83,18 @@ def is_recent(entry):
 
 def get_category(keyword):
     for cat, keywords in CATEGORY_MAP.items():
-        if keyword in keywords:
-            return cat
+        if keyword in keywords: return cat
     return "기타"
+
+# [NEW] 제목 유사도 검사 함수
+def is_duplicate_topic(new_title, existing_items):
+    """기존 수집된 기사들과 제목 유사도가 50% 이상이면 중복으로 간주"""
+    for item in existing_items:
+        # difflib을 사용해 두 문자열 간 유사도(0.0 ~ 1.0) 측정
+        similarity = difflib.SequenceMatcher(None, new_title, item['title']).ratio()
+        if similarity > 0.5: # 50% 이상 비슷하면 중복 처리 (ex. "시멘트 가격 인상" vs "시멘트값 오른다")
+            return True
+    return False
 
 def fetch_news():
     news_items = []
@@ -110,16 +116,23 @@ def fetch_news():
                 if is_recent(entry):
                     if is_spam_news(entry.title): continue
 
-                    if not any(item['link'] == entry.link for item in news_items):
-                        news_items.append({
-                            "id": len(news_items),
-                            "title": entry.title,
-                            "link": entry.link,
-                            "keyword": keyword,
-                            "category": get_category(keyword),
-                            "date": entry.published
-                        })
-                        valid_count += 1
+                    # [수정] 1. 링크 중복 검사 (기본)
+                    if any(item['link'] == entry.link for item in news_items):
+                        continue
+                    
+                    # [수정] 2. 제목 유사도 검사 (추가) - 내용이 같은 다른 언론사 기사 필터링
+                    if is_duplicate_topic(entry.title, news_items):
+                        continue
+
+                    news_items.append({
+                        "id": len(news_items),
+                        "title": entry.title,
+                        "link": entry.link,
+                        "keyword": keyword,
+                        "category": get_category(keyword),
+                        "date": entry.published
+                    })
+                    valid_count += 1
         except Exception as e:
             print(f"⚠️ '{keyword}' 오류: {e}")
             continue
@@ -128,9 +141,6 @@ def fetch_news():
     return news_items
 
 def generate_analysis_data(news_items):
-    """
-    AI에게는 '분석'만 시키고, '데이터(JSON)'만 받습니다.
-    """
     if not news_items: return None
     
     kst_now = get_korea_time()
@@ -333,7 +343,6 @@ def send_email(html_body):
     
     msg = MIMEMultipart()
     msg['From'] = EMAIL_SENDER
-    # [BCC 효과] 받는 사람은 '구매계약실 여러분'으로 보임
     msg['To'] = f"구매계약실 여러분 <{EMAIL_SENDER}>"
     msg['Subject'] = f"[Daily] {today_str} 구매계약실 시장 동향 보고"
     msg.attach(MIMEText(html_body, 'html'))
@@ -345,8 +354,7 @@ def send_email(html_body):
         
         receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
         
-        # [복구] 일괄 전송 (한 번의 연결로 42명 전송)
-        # 보안 필터(Greylisting)에 걸리더라도, 이후 재시도나 지연 배달로 모두 도착함
+        # 일괄 발송 유지 (지연 도착은 보안 검사 때문이므로 정상)
         server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
         
         server.quit()
