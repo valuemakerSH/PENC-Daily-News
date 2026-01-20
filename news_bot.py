@@ -5,7 +5,7 @@ import time
 import urllib.parse
 import json
 import random
-import difflib # [추가] 제목 유사도 검사를 위한 라이브러리
+import difflib 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
@@ -86,13 +86,10 @@ def get_category(keyword):
         if keyword in keywords: return cat
     return "기타"
 
-# [NEW] 제목 유사도 검사 함수
 def is_duplicate_topic(new_title, existing_items):
-    """기존 수집된 기사들과 제목 유사도가 50% 이상이면 중복으로 간주"""
     for item in existing_items:
-        # difflib을 사용해 두 문자열 간 유사도(0.0 ~ 1.0) 측정
         similarity = difflib.SequenceMatcher(None, new_title, item['title']).ratio()
-        if similarity > 0.5: # 50% 이상 비슷하면 중복 처리 (ex. "시멘트 가격 인상" vs "시멘트값 오른다")
+        if similarity > 0.5: 
             return True
     return False
 
@@ -116,13 +113,9 @@ def fetch_news():
                 if is_recent(entry):
                     if is_spam_news(entry.title): continue
 
-                    # [수정] 1. 링크 중복 검사 (기본)
-                    if any(item['link'] == entry.link for item in news_items):
-                        continue
+                    if any(item['link'] == entry.link for item in news_items): continue
                     
-                    # [수정] 2. 제목 유사도 검사 (추가) - 내용이 같은 다른 언론사 기사 필터링
-                    if is_duplicate_topic(entry.title, news_items):
-                        continue
+                    if is_duplicate_topic(entry.title, news_items): continue
 
                     news_items.append({
                         "id": len(news_items),
@@ -166,6 +159,11 @@ def generate_analysis_data(news_items):
         1. 전체적인 **시장 날씨 요약** (1~2문장).
         2. 위 목록에서 구매 업무에 가장 중요한 **핵심 기사 3~5개**를 선정하여 심층 분석(Deep Dive).
         
+        [🚨 중요: 과거 기사 필터링 (Sanity Check)]
+        - Google News 오류로 인해 **과거 기사(1~3년 전)**가 최신 기사처럼 섞여 있을 수 있습니다.
+        - **제목과 문맥을 분석하여, 오늘({today_formatted}) 기준으로 시의성이 떨어지거나 이미 종료된 과거 사건(예: 2023년 행사, 작년 실적 등)은 절대 선정하지 마세요.**
+        - 날짜가 명시되지 않았더라도 "작년", "지난해" 등의 표현이 현재 시점과 맞지 않으면 제외하세요.
+
         [필수 출력 형식 (JSON)]
         ```json
         {{
@@ -354,7 +352,6 @@ def send_email(html_body):
         
         receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
         
-        # 일괄 발송 유지 (지연 도착은 보안 검사 때문이므로 정상)
         server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
         
         server.quit()
