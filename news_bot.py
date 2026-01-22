@@ -75,7 +75,6 @@ def is_recent(entry):
 
         now_utc = datetime.now(timezone.utc)
         if published_dt > now_utc + timedelta(minutes=10): return False
-        
         one_day_ago = now_utc - timedelta(hours=24)
         return published_dt > one_day_ago
     except Exception:
@@ -160,9 +159,7 @@ def generate_analysis_data(news_items):
         2. 위 목록에서 구매 업무에 가장 중요한 **핵심 기사 3~5개**를 선정하여 심층 분석(Deep Dive).
         
         [🚨 중요: 과거 기사 필터링 (Sanity Check)]
-        - Google News 오류로 인해 **과거 기사(1~3년 전)**가 최신 기사처럼 섞여 있을 수 있습니다.
-        - **제목과 문맥을 분석하여, 오늘({today_formatted}) 기준으로 시의성이 떨어지거나 이미 종료된 과거 사건(예: 2023년 행사, 작년 실적 등)은 절대 선정하지 마세요.**
-        - 날짜가 명시되지 않았더라도 "작년", "지난해" 등의 표현이 현재 시점과 맞지 않으면 제외하세요.
+        - 제목과 문맥을 분석하여, 오늘({today_formatted}) 기준으로 시의성이 떨어지거나 이미 종료된 과거 사건(예: 2023년 행사, 작년 실적 등)은 절대 선정하지 마세요.
 
         [필수 출력 형식 (JSON)]
         ```json
@@ -204,7 +201,7 @@ def build_html_report(ai_data, news_items):
         else:
             grouped_news["기타"].append(item)
 
-    # 1. 스타일 정의 (이스터에그 스타일: 이모지 제거)
+    # 1. 스타일 정의
     style_block = """
     <style>
         body { font-family: 'Pretendard', 'Malgun Gothic', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }
@@ -255,7 +252,7 @@ def build_html_report(ai_data, news_items):
     </style>
     """
 
-    # 2. HTML 조립 시작 (리스트 사용)
+    # 2. HTML 조립 시작
     content_parts = []
     
     # 2-1. 날씨 섹션
@@ -332,7 +329,7 @@ def build_html_report(ai_data, news_items):
     if len(content_parts) > 1:
         insert_pos = random.randint(1, len(content_parts))
         content_parts.insert(insert_pos, egg_html)
-    else:ㅃ
+    else:
         content_parts.append(egg_html)
 
     # 4. 최종 HTML 병합
