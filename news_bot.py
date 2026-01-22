@@ -204,75 +204,75 @@ def build_html_report(ai_data, news_items):
         else:
             grouped_news["기타"].append(item)
 
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
+    # 1. 스타일 정의 (이스터에그 스타일: 이모지 제거)
+    style_block = """
     <style>
-        body {{ font-family: 'Pretendard', 'Malgun Gothic', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }}
-        .email-container {{ max-width: 850px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
-        .header {{ background-color: #0054a6; color: #ffffff; padding: 40px 50px; }}
-        .content {{ padding: 50px; }}
+        body { font-family: 'Pretendard', 'Malgun Gothic', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }
+        .email-container { max-width: 850px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        .header { background-color: #0054a6; color: #ffffff; padding: 40px 50px; }
+        .content { padding: 50px; }
         
-        .weather-box {{ background-color: #eaf4fc; padding: 25px; border-radius: 12px; margin-bottom: 50px; border: 1px solid #dbeafe; }}
-        .weather-title {{ margin: 0 0 10px 0; color: #0054a6; font-size: 20px; font-weight: 700; }}
+        .weather-box { background-color: #eaf4fc; padding: 25px; border-radius: 12px; margin-bottom: 50px; border: 1px solid #dbeafe; }
+        .weather-title { margin: 0 0 10px 0; color: #0054a6; font-size: 20px; font-weight: 700; }
         
-        .cat-title {{ font-size: 22px; color: #111; margin: 60px 0 20px 0; border-left: 5px solid #0054a6; padding-left: 15px; font-weight: 700; }}
+        .cat-title { font-size: 22px; color: #111; margin: 60px 0 20px 0; border-left: 5px solid #0054a6; padding-left: 15px; font-weight: 700; }
         
-        .card {{ background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }}
-        .card-title {{ font-size: 20px; font-weight: 700; color: #101828; margin-bottom: 12px; line-height: 1.4; word-break: keep-all; }}
-        .card-body {{ font-size: 16px; color: #475467; line-height: 1.7; margin-bottom: 20px; word-break: keep-all; }}
+        .card { background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
+        .card-title { font-size: 20px; font-weight: 700; color: #101828; margin-bottom: 12px; line-height: 1.4; word-break: keep-all; }
+        .card-body { font-size: 16px; color: #475467; line-height: 1.7; margin-bottom: 20px; word-break: keep-all; }
         
-        .insight-table {{ width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px; border-radius: 8px; }}
-        .insight-label {{ padding: 15px; width: 1%; white-space: nowrap; vertical-align: top; font-weight: 700; font-size: 15px; }}
-        .insight-text {{ padding: 15px; font-size: 15px; line-height: 1.6; vertical-align: top; word-break: keep-all; }}
+        .insight-table { width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px; border-radius: 8px; }
+        .insight-label { padding: 15px; width: 1%; white-space: nowrap; vertical-align: top; font-weight: 700; font-size: 15px; }
+        .insight-text { padding: 15px; font-size: 15px; line-height: 1.6; vertical-align: top; word-break: keep-all; }
         
-        .risk-Critical {{ background-color: #fdecea; color: #d32f2f; }}
-        .risk-Warning {{ background-color: #fff4e5; color: #ed6c02; }}
-        .risk-Info {{ background-color: #f0f9ff; color: #0288d1; }}
+        .risk-Critical { background-color: #fdecea; color: #d32f2f; }
+        .risk-Warning { background-color: #fff4e5; color: #ed6c02; }
+        .risk-Info { background-color: #f0f9ff; color: #0288d1; }
         
-        .btn {{ display: inline-block; background-color: #fff; color: #344054; border: 1px solid #d0d5dd; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }}
+        .btn { display: inline-block; background-color: #fff; color: #344054; border: 1px solid #d0d5dd; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
         
-        .headline-box {{ background-color: #f9fafb; padding: 20px; border-radius: 8px; margin-top: 10px; }}
-        .headline-title {{ font-size: 15px; font-weight: 700; color: #667085; margin-bottom: 10px; }}
-        .headline-item {{ margin-bottom: 8px; font-size: 14px; color: #555; list-style: none; }}
-        .headline-link {{ text-decoration: none; color: #4b5563; transition: color 0.2s; word-break: keep-all; cursor: pointer; }}
-        .headline-link:hover {{ color: #0054a6; text-decoration: underline; }}
+        .headline-box { background-color: #f9fafb; padding: 20px; border-radius: 8px; margin-top: 10px; }
+        .headline-title { font-size: 15px; font-weight: 700; color: #667085; margin-bottom: 10px; }
+        .headline-item { margin-bottom: 8px; font-size: 14px; color: #555; list-style: none; }
+        .headline-link { text-decoration: none; color: #4b5563; transition: color 0.2s; word-break: keep-all; cursor: pointer; }
+        .headline-link:hover { color: #0054a6; text-decoration: underline; }
 
-        .easter-egg {{
-            margin-top: 30px;
-            font-size: 11px;
-            color: #101828;
+        /* 이스터에그: 투명하게 숨김 */
+        .easter-egg-wrapper { text-align: center; margin: 30px 0; }
+        .easter-egg {
+            display: inline-block;
+            font-size: 12px;
+            color: transparent; /* 배경색 상관없이 투명 */
             cursor: help;
             transition: all 0.5s ease;
-            text-align: center;
-            letter-spacing: 1px;
-        }}
-        .easter-egg:hover {{
-            color: #ff6b6b;
-            transform: scale(1.05);
+            user-select: all; /* 드래그 가능 */
+        }
+        .easter-egg:hover {
+            color: #ff6b6b; /* 마우스 오버 시 붉은색 등장 */
+            transform: scale(1.1) rotate(2deg);
             font-weight: bold;
-        }}
+        }
     </style>
-    </head>
-    <body>
-        <div class="email-container">
-            <div class="header">
-                <h1 style="margin:0; font-size:28px;">Daily Market & Risk Briefing</h1>
-                <div style="margin-top:10px; opacity:0.9;">POSCO E&C 구매계약실 | {today_str}</div>
-            </div>
-            <div class="content">
-                <div class="weather-box">
-                    <h2 class="weather-title">🌤️ Today's Market Weather</h2>
-                    <div style="font-size: 17px;">{ai_data.get('weather_summary', '시장 분석 데이터 없음')}</div>
-                </div>
     """
 
+    # 2. HTML 조립 시작 (리스트 사용)
+    content_parts = []
+    
+    # 2-1. 날씨 섹션
+    content_parts.append(f"""
+        <div class="weather-box">
+            <h2 class="weather-title">🌤️ Today's Market Weather</h2>
+            <div style="font-size: 17px;">{ai_data.get('weather_summary', '시장 분석 데이터 없음')}</div>
+        </div>
+    """)
+
+    # 2-2. 카테고리별 섹션 조립
     for cat_name, items in grouped_news.items():
         if not items: continue
-
-        html += f'<div class="cat-title">[{cat_name}]</div>'
         
+        cat_html = f'<div class="cat-title">[{cat_name}]</div>'
+        
+        # 상세 카드
         for item in items:
             if item['id'] in selected_map:
                 ai_info = selected_map[item['id']]
@@ -285,7 +285,7 @@ def build_html_report(ai_data, news_items):
                 elif risk_level == 'Warning':
                     bg_color, text_color = "#fff4e5", "#ed6c02"
 
-                html += f"""
+                cat_html += f"""
                 <div class="card">
                     <div class="card-title">{item['title']}</div>
                     <div class="card-body">{ai_info['summary']}</div>
@@ -302,36 +302,64 @@ def build_html_report(ai_data, news_items):
                 </div>
                 """
         
+        # 단신 리스트
         headlines = [item for item in items if item['id'] not in selected_map]
-        
         if headlines:
-            html += f"""
+            cat_html += """
             <div class="headline-box">
                 <div class="headline-title">📌 관련 주요 단신</div>
                 <ul style="padding-left: 20px; margin: 0;">
             """
             for h_item in headlines:
-                html += f"""
+                cat_html += f"""
                 <li class="headline-item">
                     <a href="{h_item['link']}" class="headline-link" target="_blank" rel="noopener noreferrer">{h_item['title']}</a>
                 </li>
                 """
-            html += "</ul></div>"
+            cat_html += "</ul></div>"
+            
+        content_parts.append(cat_html)
 
-    html += """
-                <div style="background-color: #101828; padding: 40px; text-align: center; color: #98a2b3; font-size: 14px;">
+    # 3. 이스터에그 랜덤 삽입 (이모지 제거)
+    egg_html = """
+    <div class="easter-egg-wrapper">
+        <div class="easter-egg">
+            오? 저를 발견하셨군요! 연락주시면 커피 한잔 사드릴께요
+        </div>
+    </div>
+    """
+    
+    if len(content_parts) > 1:
+        insert_pos = random.randint(1, len(content_parts))
+        content_parts.insert(insert_pos, egg_html)
+    else:ㅃ
+        content_parts.append(egg_html)
+
+    # 4. 최종 HTML 병합
+    main_content = "".join(content_parts)
+
+    final_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8">{style_block}</head>
+    <body>
+        <div class="email-container">
+            <div class="header">
+                <h1 style="margin:0; font-size:28px;">Daily Market & Risk Briefing</h1>
+                <div style="margin-top:10px; opacity:0.9;">POSCO E&C 구매계약실 | {today_str}</div>
+            </div>
+            <div class="content">
+                {main_content}
+                <div style="margin-top: 60px; text-align: center; color: #98a2b3; font-size: 13px; border-top: 1px solid #eee; padding-top: 20px;">
                     <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
                     <p>문의: 구매계약기획그룹 송승호 프로 | © POSCO E&C</p>
-                    <div class="easter-egg">
-                        오? 저를 발견하셨군요! 연락주시면 커피 한잔 사드릴께요 ☕
-                    </div>
                 </div>
             </div>
         </div>
     </body>
     </html>
     """
-    return html
+    return final_html
 
 def send_email(html_body):
     if not html_body: return
