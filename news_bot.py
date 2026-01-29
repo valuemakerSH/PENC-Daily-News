@@ -75,6 +75,7 @@ def is_recent(entry):
 
         now_utc = datetime.now(timezone.utc)
         if published_dt > now_utc + timedelta(minutes=10): return False
+        
         one_day_ago = now_utc - timedelta(hours=24)
         return published_dt > one_day_ago
     except Exception:
@@ -161,8 +162,8 @@ def generate_analysis_data(news_items):
         [🚨 중요: 과거 기사 필터링 (Sanity Check)]
         - 제목과 문맥을 분석하여, 오늘({today_formatted}) 기준으로 시의성이 떨어지거나 이미 종료된 과거 사건(예: 2023년 행사, 작년 실적 등)은 절대 선정하지 마세요.
 
-        [필수 출력 형식 (JSON)]
-        ```json
+        [필수 출력 형식 (JSON Only)]
+        반드시 아래 JSON 포맷으로만 응답하세요. 서론이나 마크다운 태그를 붙이지 마세요.
         {{
             "weather_summary": "시장 날씨 요약 문구 (날씨 아이콘 포함)",
             "selected_cards": [
@@ -174,12 +175,29 @@ def generate_analysis_data(news_items):
                 }}
             ]
         }}
-        ```
         """
         
-        response = model.generate_content(prompt)
-        clean_json = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(clean_json)
+        # [수정] 안전 필터 해제 (뉴스 내용을 위험하다고 판단하지 않도록)
+        safety_settings = [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ]
+
+        response = model.generate_content(prompt, safety_settings=safety_settings)
+        
+        # [수정] 응답에서 JSON 부분만 정교하게 추출
+        text = response.text
+        start_idx = text.find('{')
+        end_idx = text.rfind('}')
+        
+        if start_idx != -1 and end_idx != -1:
+            clean_json = text[start_idx:end_idx+1]
+            return json.loads(clean_json)
+        else:
+            print("⚠️ AI 응답에 JSON이 없습니다.")
+            return None
 
     except Exception as e:
         print(f"❌ AI 분석 중 오류: {e}")
