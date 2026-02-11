@@ -6,6 +6,7 @@ import urllib.parse
 import json
 import random
 import difflib 
+import re # 정규표현식(텍스트 정리용)
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
@@ -83,7 +84,8 @@ def is_recent(entry):
 
 def get_category(keyword):
     for cat, keywords in CATEGORY_MAP.items():
-        if keyword in keywords: return cat
+        if keyword in keywords:
+            return cat
     return "기타"
 
 def is_duplicate_topic(new_title, existing_items):
@@ -159,13 +161,14 @@ def generate_analysis_data(news_items):
         1. 전체적인 **시장 날씨 요약** (1~2문장).
         2. 위 목록에서 구매 업무에 가장 중요한 **핵심 기사 3~5개**를 선정하여 심층 분석(Deep Dive).
         
-        [🚨 중요: 과거 기사 필터링 (Sanity Check)]
-        - 제목과 문맥을 분석하여, 오늘({today_formatted}) 기준으로 시의성이 떨어지거나 이미 종료된 과거 사건(예: 2023년 행사, 작년 실적 등)은 절대 선정하지 마세요.
+        [🚨 중요]
+        - **weather_summary 작성 시 (ID:숫자) 같은 참조 번호를 절대 포함하지 마세요.**
+        - 과거 기사(작년, 재작년)는 분석 대상에서 제외하세요.
 
-        [필수 출력 형식 (JSON Only)]
-        반드시 아래 JSON 포맷으로만 응답하세요. 서론이나 마크다운 태그를 붙이지 마세요.
+        [필수 출력 형식 (JSON)]
+        ```json
         {{
-            "weather_summary": "시장 날씨 요약 문구 (날씨 아이콘 포함)",
+            "weather_summary": "시장 날씨 요약 문구 (날씨 아이콘 포함, ID 번호 금지)",
             "selected_cards": [
                 {{
                     "id": 뉴스ID(숫자),
@@ -175,9 +178,10 @@ def generate_analysis_data(news_items):
                 }}
             ]
         }}
+        ```
         """
         
-        # [수정] 안전 필터 해제 (뉴스 내용을 위험하다고 판단하지 않도록)
+        # 안전 필터 해제
         safety_settings = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -187,16 +191,24 @@ def generate_analysis_data(news_items):
 
         response = model.generate_content(prompt, safety_settings=safety_settings)
         
-        # [수정] 응답에서 JSON 부분만 정교하게 추출
+        # JSON 추출
         text = response.text
         start_idx = text.find('{')
         end_idx = text.rfind('}')
         
         if start_idx != -1 and end_idx != -1:
             clean_json = text[start_idx:end_idx+1]
-            return json.loads(clean_json)
+            data = json.loads(clean_json)
+            
+            # [수정] 후처리: 혹시라도 ID(예: ID:10)가 텍스트에 남아있으면 강제 삭제
+            if 'weather_summary' in data:
+                # 괄호 안의 ID 제거 (ex: (ID:10), (id: 5))
+                data['weather_summary'] = re.sub(r'\s*\(ID:\s*\d+\)', '', data['weather_summary'], flags=re.IGNORECASE)
+                # 괄호 없는 ID 제거 (ex: ID:10)
+                data['weather_summary'] = re.sub(r'ID:\s*\d+', '', data['weather_summary'], flags=re.IGNORECASE)
+            
+            return data
         else:
-            print("⚠️ AI 응답에 JSON이 없습니다.")
             return None
 
     except Exception as e:
@@ -219,75 +231,75 @@ def build_html_report(ai_data, news_items):
         else:
             grouped_news["기타"].append(item)
 
-    # 1. 스타일 정의
-    style_block = """
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
     <style>
-        body { font-family: 'Pretendard', 'Malgun Gothic', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }
-        .email-container { max-width: 850px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        .header { background-color: #0054a6; color: #ffffff; padding: 40px 50px; }
-        .content { padding: 50px; }
+        body {{ font-family: 'Pretendard', 'Malgun Gothic', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }}
+        .email-container {{ max-width: 850px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
+        .header {{ background-color: #0054a6; color: #ffffff; padding: 40px 50px; }}
+        .content {{ padding: 50px; }}
         
-        .weather-box { background-color: #eaf4fc; padding: 25px; border-radius: 12px; margin-bottom: 50px; border: 1px solid #dbeafe; }
-        .weather-title { margin: 0 0 10px 0; color: #0054a6; font-size: 20px; font-weight: 700; }
+        .weather-box {{ background-color: #eaf4fc; padding: 25px; border-radius: 12px; margin-bottom: 50px; border: 1px solid #dbeafe; }}
+        .weather-title {{ margin: 0 0 10px 0; color: #0054a6; font-size: 20px; font-weight: 700; }}
         
-        .cat-title { font-size: 22px; color: #111; margin: 60px 0 20px 0; border-left: 5px solid #0054a6; padding-left: 15px; font-weight: 700; }
+        .cat-title {{ font-size: 22px; color: #111; margin: 60px 0 20px 0; border-left: 5px solid #0054a6; padding-left: 15px; font-weight: 700; }}
         
-        .card { background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
-        .card-title { font-size: 20px; font-weight: 700; color: #101828; margin-bottom: 12px; line-height: 1.4; word-break: keep-all; }
-        .card-body { font-size: 16px; color: #475467; line-height: 1.7; margin-bottom: 20px; word-break: keep-all; }
+        .card {{ background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }}
+        .card-title {{ font-size: 20px; font-weight: 700; color: #101828; margin-bottom: 12px; line-height: 1.4; word-break: keep-all; }}
+        .card-body {{ font-size: 16px; color: #475467; line-height: 1.7; margin-bottom: 20px; word-break: keep-all; }}
         
-        .insight-table { width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px; border-radius: 8px; }
-        .insight-label { padding: 15px; width: 1%; white-space: nowrap; vertical-align: top; font-weight: 700; font-size: 15px; }
-        .insight-text { padding: 15px; font-size: 15px; line-height: 1.6; vertical-align: top; word-break: keep-all; }
+        .insight-table {{ width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px; border-radius: 8px; }}
+        .insight-label {{ padding: 15px; width: 1%; white-space: nowrap; vertical-align: top; font-weight: 700; font-size: 15px; }}
+        .insight-text {{ padding: 15px; font-size: 15px; line-height: 1.6; vertical-align: top; word-break: keep-all; }}
         
-        .risk-Critical { background-color: #fdecea; color: #d32f2f; }
-        .risk-Warning { background-color: #fff4e5; color: #ed6c02; }
-        .risk-Info { background-color: #f0f9ff; color: #0288d1; }
+        .risk-Critical {{ background-color: #fdecea; color: #d32f2f; }}
+        .risk-Warning {{ background-color: #fff4e5; color: #ed6c02; }}
+        .risk-Info {{ background-color: #f0f9ff; color: #0288d1; }}
         
-        .btn { display: inline-block; background-color: #fff; color: #344054; border: 1px solid #d0d5dd; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .btn {{ display: inline-block; background-color: #fff; color: #344054; border: 1px solid #d0d5dd; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }}
         
-        .headline-box { background-color: #f9fafb; padding: 20px; border-radius: 8px; margin-top: 10px; }
-        .headline-title { font-size: 15px; font-weight: 700; color: #667085; margin-bottom: 10px; }
-        .headline-item { margin-bottom: 8px; font-size: 14px; color: #555; list-style: none; }
-        .headline-link { text-decoration: none; color: #4b5563; transition: color 0.2s; word-break: keep-all; cursor: pointer; }
-        .headline-link:hover { color: #0054a6; text-decoration: underline; }
+        .headline-box {{ background-color: #f9fafb; padding: 20px; border-radius: 8px; margin-top: 10px; }}
+        .headline-title {{ font-size: 15px; font-weight: 700; color: #667085; margin-bottom: 10px; }}
+        .headline-item {{ margin-bottom: 8px; font-size: 14px; color: #555; list-style: none; }}
+        .headline-link {{ text-decoration: none; color: #4b5563; transition: color 0.2s; word-break: keep-all; cursor: pointer; }}
+        .headline-link:hover {{ color: #0054a6; text-decoration: underline; }}
 
-        /* 이스터에그: 투명하게 숨김 */
-        .easter-egg-wrapper { text-align: center; margin: 30px 0; }
-        .easter-egg {
-            display: inline-block;
-            font-size: 12px;
-            color: transparent; /* 배경색 상관없이 투명 */
+        .easter-egg {{
+            margin-top: 30px;
+            font-size: 11px;
+            color: #101828;
             cursor: help;
             transition: all 0.5s ease;
-            user-select: all; /* 드래그 가능 */
-        }
-        .easter-egg:hover {
-            color: #ff6b6b; /* 마우스 오버 시 붉은색 등장 */
-            transform: scale(1.1) rotate(2deg);
+            text-align: center;
+            letter-spacing: 1px;
+        }}
+        .easter-egg:hover {{
+            color: #ff6b6b;
+            transform: scale(1.05);
             font-weight: bold;
-        }
+        }}
     </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <div class="header">
+                <h1 style="margin:0; font-size:28px;">Daily Market & Risk Briefing</h1>
+                <div style="margin-top:10px; opacity:0.9;">POSCO E&C 구매계약실 | {today_str}</div>
+            </div>
+            <div class="content">
+                <div class="weather-box">
+                    <h2 class="weather-title">🌤️ Today's Market Weather</h2>
+                    <div style="font-size: 17px;">{ai_data.get('weather_summary', '시장 분석 데이터 없음')}</div>
+                </div>
     """
 
-    # 2. HTML 조립 시작
-    content_parts = []
-    
-    # 2-1. 날씨 섹션
-    content_parts.append(f"""
-        <div class="weather-box">
-            <h2 class="weather-title">🌤️ Today's Market Weather</h2>
-            <div style="font-size: 17px;">{ai_data.get('weather_summary', '시장 분석 데이터 없음')}</div>
-        </div>
-    """)
-
-    # 2-2. 카테고리별 섹션 조립
     for cat_name, items in grouped_news.items():
         if not items: continue
+
+        html += f'<div class="cat-title">[{cat_name}]</div>'
         
-        cat_html = f'<div class="cat-title">[{cat_name}]</div>'
-        
-        # 상세 카드
         for item in items:
             if item['id'] in selected_map:
                 ai_info = selected_map[item['id']]
@@ -300,7 +312,7 @@ def build_html_report(ai_data, news_items):
                 elif risk_level == 'Warning':
                     bg_color, text_color = "#fff4e5", "#ed6c02"
 
-                cat_html += f"""
+                html += f"""
                 <div class="card">
                     <div class="card-title">{item['title']}</div>
                     <div class="card-body">{ai_info['summary']}</div>
@@ -317,64 +329,36 @@ def build_html_report(ai_data, news_items):
                 </div>
                 """
         
-        # 단신 리스트
         headlines = [item for item in items if item['id'] not in selected_map]
+        
         if headlines:
-            cat_html += """
+            html += f"""
             <div class="headline-box">
                 <div class="headline-title">📌 관련 주요 단신</div>
                 <ul style="padding-left: 20px; margin: 0;">
             """
             for h_item in headlines:
-                cat_html += f"""
+                html += f"""
                 <li class="headline-item">
                     <a href="{h_item['link']}" class="headline-link" target="_blank" rel="noopener noreferrer">{h_item['title']}</a>
                 </li>
                 """
-            cat_html += "</ul></div>"
-            
-        content_parts.append(cat_html)
+            html += "</ul></div>"
 
-    # 3. 이스터에그 랜덤 삽입 (이모지 제거)
-    egg_html = """
-    <div class="easter-egg-wrapper">
-        <div class="easter-egg">
-            오? 저를 발견하셨군요! 연락주시면 커피 한잔 사드릴께요
-        </div>
-    </div>
-    """
-    
-    if len(content_parts) > 1:
-        insert_pos = random.randint(1, len(content_parts))
-        content_parts.insert(insert_pos, egg_html)
-    else:
-        content_parts.append(egg_html)
-
-    # 4. 최종 HTML 병합
-    main_content = "".join(content_parts)
-
-    final_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head><meta charset="utf-8">{style_block}</head>
-    <body>
-        <div class="email-container">
-            <div class="header">
-                <h1 style="margin:0; font-size:28px;">Daily Market & Risk Briefing</h1>
-                <div style="margin-top:10px; opacity:0.9;">POSCO E&C 구매계약실 | {today_str}</div>
-            </div>
-            <div class="content">
-                {main_content}
-                <div style="margin-top: 60px; text-align: center; color: #98a2b3; font-size: 13px; border-top: 1px solid #eee; padding-top: 20px;">
+    html += """
+                <div style="background-color: #101828; padding: 40px; text-align: center; color: #98a2b3; font-size: 14px;">
                     <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
                     <p>문의: 구매계약기획그룹 송승호 프로 | © POSCO E&C</p>
+                    <div class="easter-egg">
+                        오? 저를 발견하셨군요! 연락주시면 커피 한잔 사드릴께요
+                    </div>
                 </div>
             </div>
         </div>
     </body>
     </html>
     """
-    return final_html
+    return html
 
 def send_email(html_body):
     if not html_body: return
@@ -395,10 +379,22 @@ def send_email(html_body):
         
         receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
         
-        server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
+        # 15명씩 분할 발송, 60초 대기
+        batch_size = 15
+        total_sent = 0
         
+        for i in range(0, len(receivers), batch_size):
+            batch = receivers[i:i + batch_size]
+            server.sendmail(EMAIL_SENDER, batch, msg.as_string())
+            total_sent += len(batch)
+            print(f"📧 Batch {i//batch_size + 1} 발송 완료 ({len(batch)}명).")
+            
+            if i + batch_size < len(receivers):
+                print("⏳ 보안 쿨타임 60초 대기 중...")
+                time.sleep(60) 
+            
         server.quit()
-        print(f"✅ 총 {len(receivers)}명에게 일괄 발송 완료.")
+        print(f"✅ 총 {total_sent}명에게 발송 완료.")
         
     except Exception as e:
         print(f"❌ 발송 실패: {e}")
