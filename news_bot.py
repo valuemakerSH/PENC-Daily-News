@@ -144,7 +144,8 @@ def generate_analysis_data(news_items):
     print("🧠 AI 분석 시작 (JSON 모드)...")
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
-        model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
+        # [수정] 모델명 변경: gemini-2.5-flash (정식 버전 시도)
+        model = genai.GenerativeModel('gemini-2.5-flash')
 
         news_text = ""
         for item in news_items:
@@ -161,14 +162,13 @@ def generate_analysis_data(news_items):
         1. 전체적인 **시장 날씨 요약** (1~2문장).
         2. 위 목록에서 구매 업무에 가장 중요한 **핵심 기사 3~5개**를 선정하여 심층 분석(Deep Dive).
         
-        [🚨 중요]
-        - **weather_summary 작성 시 (ID:숫자) 같은 참조 번호를 절대 포함하지 마세요.**
-        - 과거 기사(작년, 재작년)는 분석 대상에서 제외하세요.
+        [🚨 중요: 과거 기사 필터링 (Sanity Check)]
+        - 제목과 문맥을 분석하여, 오늘({today_formatted}) 기준으로 시의성이 떨어지거나 이미 종료된 과거 사건(예: 2023년 행사, 작년 실적 등)은 절대 선정하지 마세요.
 
-        [필수 출력 형식 (JSON)]
-        ```json
+        [필수 출력 형식 (JSON Only)]
+        반드시 아래 JSON 포맷으로만 응답하세요. 서론이나 마크다운 태그를 붙이지 마세요.
         {{
-            "weather_summary": "시장 날씨 요약 문구 (날씨 아이콘 포함, ID 번호 금지)",
+            "weather_summary": "시장 날씨 요약 문구 (날씨 아이콘 포함)",
             "selected_cards": [
                 {{
                     "id": 뉴스ID(숫자),
@@ -178,7 +178,6 @@ def generate_analysis_data(news_items):
                 }}
             ]
         }}
-        ```
         """
         
         # 안전 필터 해제
@@ -200,11 +199,9 @@ def generate_analysis_data(news_items):
             clean_json = text[start_idx:end_idx+1]
             data = json.loads(clean_json)
             
-            # [수정] 후처리: 혹시라도 ID(예: ID:10)가 텍스트에 남아있으면 강제 삭제
+            # 후처리: ID 텍스트 제거
             if 'weather_summary' in data:
-                # 괄호 안의 ID 제거 (ex: (ID:10), (id: 5))
                 data['weather_summary'] = re.sub(r'\s*\(ID:\s*\d+\)', '', data['weather_summary'], flags=re.IGNORECASE)
-                # 괄호 없는 ID 제거 (ex: ID:10)
                 data['weather_summary'] = re.sub(r'ID:\s*\d+', '', data['weather_summary'], flags=re.IGNORECASE)
             
             return data
@@ -379,22 +376,10 @@ def send_email(html_body):
         
         receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
         
-        # 15명씩 분할 발송, 60초 대기
-        batch_size = 15
-        total_sent = 0
+        server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
         
-        for i in range(0, len(receivers), batch_size):
-            batch = receivers[i:i + batch_size]
-            server.sendmail(EMAIL_SENDER, batch, msg.as_string())
-            total_sent += len(batch)
-            print(f"📧 Batch {i//batch_size + 1} 발송 완료 ({len(batch)}명).")
-            
-            if i + batch_size < len(receivers):
-                print("⏳ 보안 쿨타임 60초 대기 중...")
-                time.sleep(60) 
-            
         server.quit()
-        print(f"✅ 총 {total_sent}명에게 발송 완료.")
+        print(f"✅ 총 {len(receivers)}명에게 일괄 발송 완료.")
         
     except Exception as e:
         print(f"❌ 발송 실패: {e}")
