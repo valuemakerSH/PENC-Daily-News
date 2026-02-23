@@ -6,7 +6,7 @@ import urllib.parse
 import json
 import random
 import difflib 
-import re # 정규표현식(텍스트 정리용)
+import re 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
@@ -60,7 +60,10 @@ def is_spam_news(title):
         if bad_word in title: return True
     return False
 
-def is_recent(entry):
+def is_recent(entry, time_window_hours=24):
+    """
+    time_window_hours: 평일은 24시간, 월요일은 72시간(주말 포함)으로 유동적으로 작동합니다.
+    """
     try:
         published_dt = None
         if hasattr(entry, 'published_parsed') and entry.published_parsed:
@@ -77,8 +80,9 @@ def is_recent(entry):
         now_utc = datetime.now(timezone.utc)
         if published_dt > now_utc + timedelta(minutes=10): return False
         
-        one_day_ago = now_utc - timedelta(hours=24)
-        return published_dt > one_day_ago
+        # 동적으로 설정된 시간(24h or 72h) 기준으로 컷오프
+        cutoff_time = now_utc - timedelta(hours=time_window_hours)
+        return published_dt > cutoff_time
     except Exception:
         return False
 
@@ -95,13 +99,14 @@ def is_duplicate_topic(new_title, existing_items):
             return True
     return False
 
-def fetch_news():
+def fetch_news(time_window_days=1, time_window_hours=24):
     news_items = []
-    print("🔍 뉴스 수집 시작...")
+    print(f"🔍 뉴스 수집 시작... (검색 기간: 최근 {time_window_hours}시간)")
     
     for keyword in KEYWORDS:
         negative_query = " -주식 -종목 -테마 -특징주"
-        encoded_query = urllib.parse.quote(f"{keyword}{negative_query} when:1d")
+        # 월요일이면 when:3d, 평일이면 when:1d로 구글 뉴스 검색 인자 변경
+        encoded_query = urllib.parse.quote(f"{keyword}{negative_query} when:{time_window_days}d")
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
         
         try:
@@ -109,14 +114,13 @@ def fetch_news():
             if not feed.entries and hasattr(feed, 'bozo_exception'): pass
 
             valid_count = 0
-            for entry in feed.entries[:20]: 
+            # 월요일이라 기사가 많을 수 있으므로 최대 검토 개수를 조금 넉넉히 잡음
+            for entry in feed.entries[:30]: 
                 if valid_count >= 10: break 
 
-                if is_recent(entry):
+                if is_recent(entry, time_window_hours):
                     if is_spam_news(entry.title): continue
-
                     if any(item['link'] == entry.link for item in news_items): continue
-                    
                     if is_duplicate_topic(entry.title, news_items): continue
 
                     news_items.append({
@@ -132,20 +136,20 @@ def fetch_news():
             print(f"⚠️ '{keyword}' 오류: {e}")
             continue
             
-    print(f"✅ 총 {len(news_items)}개의 최신 뉴스 수집 완료.")
+    print(f"✅ 총 {len(news_items)}개의 뉴스 수집 완료.")
     return news_items
 
-def generate_analysis_data(news_items):
+def generate_analysis_data(news_items, is_monday=False):
     if not news_items: return None
     
     kst_now = get_korea_time()
     today_formatted = kst_now.strftime("%Y년 %m월 %d일") 
+    period_text = "지난 주말부터 오늘까지의" if is_monday else "오늘 하루 동안의"
     
     print("🧠 AI 분석 시작 (JSON 모드)...")
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
-        # [수정] 모델명 변경: gemini-2.5-flash (정식 버전 시도)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('gemini-2.0-flash-exp')
 
         news_text = ""
         for item in news_items:
@@ -155,7 +159,7 @@ def generate_analysis_data(news_items):
         오늘은 {today_formatted}입니다.
         당신은 포스코이앤씨 구매계약실의 수석 애널리스트입니다.
         
-        [뉴스 목록]
+        [뉴스 목록] ({period_text} 수집된 데이터입니다)
         {news_text}
 
         [임무]
@@ -164,6 +168,7 @@ def generate_analysis_data(news_items):
         
         [🚨 중요: 과거 기사 필터링 (Sanity Check)]
         - 제목과 문맥을 분석하여, 오늘({today_formatted}) 기준으로 시의성이 떨어지거나 이미 종료된 과거 사건(예: 2023년 행사, 작년 실적 등)은 절대 선정하지 마세요.
+        - **weather_summary 작성 시 (ID:숫자) 같은 참조 번호를 절대 포함하지 마세요.**
 
         [필수 출력 형식 (JSON Only)]
         반드시 아래 JSON 포맷으로만 응답하세요. 서론이나 마크다운 태그를 붙이지 마세요.
@@ -180,7 +185,6 @@ def generate_analysis_data(news_items):
         }}
         """
         
-        # 안전 필터 해제
         safety_settings = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -190,7 +194,6 @@ def generate_analysis_data(news_items):
 
         response = model.generate_content(prompt, safety_settings=safety_settings)
         
-        # JSON 추출
         text = response.text
         start_idx = text.find('{')
         end_idx = text.rfind('}')
@@ -199,7 +202,6 @@ def generate_analysis_data(news_items):
             clean_json = text[start_idx:end_idx+1]
             data = json.loads(clean_json)
             
-            # 후처리: ID 텍스트 제거
             if 'weather_summary' in data:
                 data['weather_summary'] = re.sub(r'\s*\(ID:\s*\d+\)', '', data['weather_summary'], flags=re.IGNORECASE)
                 data['weather_summary'] = re.sub(r'ID:\s*\d+', '', data['weather_summary'], flags=re.IGNORECASE)
@@ -212,7 +214,7 @@ def generate_analysis_data(news_items):
         print(f"❌ AI 분석 중 오류: {e}")
         return None
 
-def build_html_report(ai_data, news_items):
+def build_html_report(ai_data, news_items, is_monday=False):
     kst_now = get_korea_time()
     today_str = kst_now.strftime("%Y년 %m월 %d일")
 
@@ -263,18 +265,18 @@ def build_html_report(ai_data, news_items):
         .headline-link {{ text-decoration: none; color: #4b5563; transition: color 0.2s; word-break: keep-all; cursor: pointer; }}
         .headline-link:hover {{ color: #0054a6; text-decoration: underline; }}
 
+        .easter-egg-wrapper {{ text-align: center; margin: 30px 0; }}
         .easter-egg {{
-            margin-top: 30px;
-            font-size: 11px;
-            color: #101828;
+            display: inline-block;
+            font-size: 12px;
+            color: transparent; 
             cursor: help;
             transition: all 0.5s ease;
-            text-align: center;
-            letter-spacing: 1px;
+            user-select: all;
         }}
         .easter-egg:hover {{
             color: #ff6b6b;
-            transform: scale(1.05);
+            transform: scale(1.1) rotate(2deg);
             font-weight: bold;
         }}
     </style>
@@ -287,15 +289,17 @@ def build_html_report(ai_data, news_items):
             </div>
             <div class="content">
                 <div class="weather-box">
-                    <h2 class="weather-title">🌤️ Today's Market Weather</h2>
+                    <h2 class="weather-title">🌤️ Market Weather Summary</h2>
                     <div style="font-size: 17px;">{ai_data.get('weather_summary', '시장 분석 데이터 없음')}</div>
                 </div>
     """
 
+    content_parts = []
+    
     for cat_name, items in grouped_news.items():
         if not items: continue
-
-        html += f'<div class="cat-title">[{cat_name}]</div>'
+        
+        cat_html = f'<div class="cat-title">[{cat_name}]</div>'
         
         for item in items:
             if item['id'] in selected_map:
@@ -309,7 +313,7 @@ def build_html_report(ai_data, news_items):
                 elif risk_level == 'Warning':
                     bg_color, text_color = "#fff4e5", "#ed6c02"
 
-                html += f"""
+                cat_html += f"""
                 <div class="card">
                     <div class="card-title">{item['title']}</div>
                     <div class="card-body">{ai_info['summary']}</div>
@@ -327,37 +331,52 @@ def build_html_report(ai_data, news_items):
                 """
         
         headlines = [item for item in items if item['id'] not in selected_map]
-        
         if headlines:
-            html += f"""
+            cat_html += """
             <div class="headline-box">
                 <div class="headline-title">📌 관련 주요 단신</div>
                 <ul style="padding-left: 20px; margin: 0;">
             """
             for h_item in headlines:
-                html += f"""
+                cat_html += f"""
                 <li class="headline-item">
                     <a href="{h_item['link']}" class="headline-link" target="_blank" rel="noopener noreferrer">{h_item['title']}</a>
                 </li>
                 """
-            html += "</ul></div>"
+            cat_html += "</ul></div>"
+            
+        content_parts.append(cat_html)
 
-    html += """
-                <div style="background-color: #101828; padding: 40px; text-align: center; color: #98a2b3; font-size: 14px;">
+    egg_html = """
+    <div class="easter-egg-wrapper">
+        <div class="easter-egg">
+            오? 저를 발견하셨군요! 연락주시면 커피 한잔 사드릴께요
+        </div>
+    </div>
+    """
+    
+    if len(content_parts) > 1:
+        insert_pos = random.randint(1, len(content_parts))
+        content_parts.insert(insert_pos, egg_html)
+    else:
+        content_parts.append(egg_html)
+
+    main_content = "".join(content_parts)
+
+    final_html = f"""
+                {main_content}
+                <div style="margin-top: 60px; text-align: center; color: #98a2b3; font-size: 13px; border-top: 1px solid #eee; padding-top: 20px;">
                     <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
                     <p>문의: 구매계약기획그룹 송승호 프로 | © POSCO E&C</p>
-                    <div class="easter-egg">
-                        오? 저를 발견하셨군요! 연락주시면 커피 한잔 사드릴께요
-                    </div>
                 </div>
             </div>
         </div>
     </body>
     </html>
     """
-    return html
+    return html + final_html
 
-def send_email(html_body):
+def send_email(html_body, is_monday=False):
     if not html_body: return
     
     kst_now = get_korea_time()
@@ -376,10 +395,21 @@ def send_email(html_body):
         
         receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
         
-        server.sendmail(EMAIL_SENDER, receivers, msg.as_string())
+        batch_size = 15
+        total_sent = 0
         
+        for i in range(0, len(receivers), batch_size):
+            batch = receivers[i:i + batch_size]
+            server.sendmail(EMAIL_SENDER, batch, msg.as_string())
+            total_sent += len(batch)
+            print(f"📧 Batch {i//batch_size + 1} 발송 완료 ({len(batch)}명).")
+            
+            if i + batch_size < len(receivers):
+                print("⏳ 보안 쿨타임 60초 대기 중...")
+                time.sleep(60) 
+            
         server.quit()
-        print(f"✅ 총 {len(receivers)}명에게 일괄 발송 완료.")
+        print(f"✅ 총 {total_sent}명에게 발송 완료.")
         
     except Exception as e:
         print(f"❌ 발송 실패: {e}")
@@ -388,13 +418,29 @@ if __name__ == "__main__":
     if not GOOGLE_API_KEY:
         print("❌ API Key가 설정되지 않았습니다.")
     else:
-        items = fetch_news()
-        if items:
-            ai_data = generate_analysis_data(items)
-            if ai_data:
-                final_html = build_html_report(ai_data, items)
-                send_email(final_html)
-            else:
-                print("❌ AI 분석 데이터 생성 실패")
+        kst_now = get_korea_time()
+        weekday = kst_now.weekday() # 0:월요일 ~ 6:일요일
+
+        # 1. 주말 발송 차단 로직
+        if weekday in [5, 6]: # 5=토요일, 6=일요일
+            print("오늘은 주말(토/일)이므로 뉴스 브리핑을 발송하지 않습니다. (월요일에 통합 발송 예정)")
         else:
-            print("수집된 뉴스가 없습니다.")
+            # 2. 월요일 통합 크롤링 로직 판단
+            is_monday = (weekday == 0)
+            
+            # 월요일이면 3일(72시간), 그 외 평일이면 1일(24시간)
+            time_window_days = 3 if is_monday else 1
+            time_window_hours = 72 if is_monday else 24
+            
+            items = fetch_news(time_window_days, time_window_hours)
+            
+            if items:
+                # 분석 및 리포트 작성 시에도 월요일 여부 전달
+                ai_data = generate_analysis_data(items, is_monday)
+                if ai_data:
+                    final_html = build_html_report(ai_data, items, is_monday)
+                    send_email(final_html, is_monday)
+                else:
+                    print("❌ AI 분석 데이터 생성 실패")
+            else:
+                print("수집된 뉴스가 없습니다.")
