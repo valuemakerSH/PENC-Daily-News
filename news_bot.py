@@ -1,446 +1,159 @@
 import os
-import smtplib
 import feedparser
-import time
-import urllib.parse
-import json
-import random
-import difflib 
-import re 
+import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
+from datetime import datetime
 import google.generativeai as genai
+import time
 
-# --- 환경 변수 ---
+# --- 설정값 (GitHub Secrets에서 가져옴) ---
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
-EMAIL_SENDER = os.environ.get("EMAIL_SENDER")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
-EMAIL_RECEIVERS = os.environ.get("EMAIL_RECEIVERS")
+EMAIL_SENDER = os.environ.get("EMAIL_SENDER")  # 보내는 사람 이메일 (Gmail)
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD") # Gmail 앱 비밀번호
+EMAIL_RECEIVERS = os.environ.get("EMAIL_RECEIVERS") # 받는 사람 (콤마로 구분)
 
-# --- 설정: 키워드 및 카테고리 매핑 ---
-CATEGORY_MAP = {
-    "자재/시황": [
-        "건설 원자재 가격", "건설 자재 환율 유가", "납품대금 연동제 건설"
-    ],
-    "공급망/물류": [
-        "건설 노조 파업 노란봉투법", "화물연대 레미콘 운송 파업", 
-        "해상 운임 SCFI 건설", "건설 현장 인력난 외국인"
-    ],
-    "전사/리스크": [
-        "포스코이앤씨", "공정위 하도급 건설", "건설 중대재해처벌법", "건설산업기본법 개정"
-    ],
-    "미래/혁신/ESG": [
-        "건설사 협력사 ESG", "건설 동반성장 상생", 
-        "스마트 건설 모듈러 OSC", "주요 건설사 구매 동향"
-    ]
-}
-
-KEYWORDS = [k for category in CATEGORY_MAP.values() for k in category]
-
-EXCLUDE_KEYWORDS = [
-    "특징주", "테마주", "관련주", "주가", "급등", "급락", "상한가", "하한가",
-    "거래량", "매수", "매도", "목표가", "체결", "증시", "종목", "투자자",
-    "지수", "코스피", "코스닥", "마감",
-    "치킨", "맥주", "식품", "마트", "백화점", "여행", "게임", "화장품",
-    "카지노", "바카라", "토토", "슬롯", "홀덤", "포커", "도박", "배팅", "잭팟",
-    "룰렛", "블랙잭", "성인", "만남", "출장", "마사지", "대출", "금리인하요구권",
-    "코인", "비트코인", "가상화폐", "리딩방",
-    "MSN", "스토리", "숨겨진", "비하인드", "충격", "경악", "네티즌", "커뮤니티"
+# --- 1. 뉴스 검색 키워드 설정 ---
+# 포스코이앤씨 관련, 구매/자재, 법규 리스크 등을 포함
+KEYWORDS = [
+    "포스코이앤씨",
+    "건설 원자재 가격",
+    "공정위 하도급 건설",
+    "시멘트 철근 가격",
+    "건설 중대재해처벌법"
 ]
 
-def get_korea_time():
-    utc_now = datetime.now(timezone.utc)
-    kst_now = utc_now + timedelta(hours=9)
-    return kst_now
-
-def is_spam_news(title):
-    for bad_word in EXCLUDE_KEYWORDS:
-        if bad_word in title: return True
-    return False
-
-def is_recent(entry, time_window_hours=24):
-    """
-    time_window_hours: 평일은 24시간, 월요일은 72시간(주말 포함)으로 유동적으로 작동합니다.
-    """
-    try:
-        published_dt = None
-        if hasattr(entry, 'published_parsed') and entry.published_parsed:
-            published_dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-        elif hasattr(entry, 'published') and entry.published:
-            published_dt = parsedate_to_datetime(entry.published)
-            if published_dt.tzinfo:
-                published_dt = published_dt.astimezone(timezone.utc)
-            else:
-                published_dt = published_dt.replace(tzinfo=timezone.utc)
-        
-        if not published_dt: return False
-
-        now_utc = datetime.now(timezone.utc)
-        if published_dt > now_utc + timedelta(minutes=10): return False
-        
-        # 동적으로 설정된 시간(24h or 72h) 기준으로 컷오프
-        cutoff_time = now_utc - timedelta(hours=time_window_hours)
-        return published_dt > cutoff_time
-    except Exception:
-        return False
-
-def get_category(keyword):
-    for cat, keywords in CATEGORY_MAP.items():
-        if keyword in keywords:
-            return cat
-    return "기타"
-
-def is_duplicate_topic(new_title, existing_items):
-    for item in existing_items:
-        similarity = difflib.SequenceMatcher(None, new_title, item['title']).ratio()
-        if similarity > 0.5: 
-            return True
-    return False
-
-def fetch_news(time_window_days=1, time_window_hours=24):
+def fetch_news_rss(keywords):
+    """구글 뉴스 RSS를 통해 키워드별 최신 뉴스를 수집합니다."""
     news_items = []
-    print(f"🔍 뉴스 수집 시작... (검색 기간: 최근 {time_window_hours}시간)")
+    base_url = "https://news.google.com/rss/search?q={}&hl=ko&gl=KR&ceid=KR:ko"
     
-    for keyword in KEYWORDS:
-        negative_query = " -주식 -종목 -테마 -특징주"
-        # 월요일이면 when:3d, 평일이면 when:1d로 구글 뉴스 검색 인자 변경
-        encoded_query = urllib.parse.quote(f"{keyword}{negative_query} when:{time_window_days}d")
-        url = f"https://news.google.com/rss/search?q={encoded_query}&hl=ko&gl=KR&ceid=KR:ko"
-        
-        try:
-            feed = feedparser.parse(url)
-            if not feed.entries and hasattr(feed, 'bozo_exception'): pass
-
-            valid_count = 0
-            # 월요일이라 기사가 많을 수 있으므로 최대 검토 개수를 조금 넉넉히 잡음
-            for entry in feed.entries[:30]: 
-                if valid_count >= 10: break 
-
-                if is_recent(entry, time_window_hours):
-                    if is_spam_news(entry.title): continue
-                    if any(item['link'] == entry.link for item in news_items): continue
-                    if is_duplicate_topic(entry.title, news_items): continue
-
-                    news_items.append({
-                        "id": len(news_items),
-                        "title": entry.title,
-                        "link": entry.link,
-                        "keyword": keyword,
-                        "category": get_category(keyword),
-                        "date": entry.published
-                    })
-                    valid_count += 1
-        except Exception as e:
-            print(f"⚠️ '{keyword}' 오류: {e}")
-            continue
-            
+    print("🔍 뉴스 수집 시작...")
+    for keyword in keywords:
+        feed = feedparser.parse(base_url.format(keyword))
+        # 키워드 당 최신 3개만 가져오기 (너무 많으면 읽기 힘듦)
+        for entry in feed.entries[:3]:
+            # 중복 제거 로직 (링크 기준)
+            if not any(item['link'] == entry.link for item in news_items):
+                news_items.append({
+                    "title": entry.title,
+                    "link": entry.link,
+                    "published": entry.published,
+                    "keyword": keyword
+                })
     print(f"✅ 총 {len(news_items)}개의 뉴스 수집 완료.")
     return news_items
 
-def generate_analysis_data(news_items, is_monday=False):
-    if not news_items: return None
+def analyze_news_with_gemini(news_items):
+    """Gemini를 사용하여 뉴스를 구매팀 관점에서 요약하고 분류합니다."""
+    print("🧠 AI 분석 시작...")
     
-    kst_now = get_korea_time()
-    today_formatted = kst_now.strftime("%Y년 %m월 %d일") 
-    period_text = "지난 주말부터 오늘까지의" if is_monday else "오늘 하루 동안의"
-    
-    print("🧠 AI 분석 시작 (JSON 모드)...")
+    if not GOOGLE_API_KEY:
+        print("❌ Google API Key가 없습니다. AI 분석을 건너뜁니다.")
+        return news_items # API 키 없으면 원본 반환
+
+    genai.configure(api_key=GOOGLE_API_KEY)
+    # [수정] Gemini 2.5 Flash 최신 모델 적용
+    model = genai.GenerativeModel('gemini-2.5-flash') 
+
+    # 프롬프트 구성
+    news_text = ""
+    for idx, item in enumerate(news_items):
+        news_text += f"[{idx+1}] 키워드: {item['keyword']} | 제목: {item['title']} | 링크: {item['link']}\n"
+
+    prompt = f"""
+    당신은 포스코이앤씨 구매실의 노련한 전문가입니다. 
+    아래 수집된 뉴스 목록을 보고 구매 업무, 리스크 관리, 자재 수급 관점에서 중요한 기사만 선별하여 브리핑해 주세요.
+
+    [뉴스 목록]
+    {news_text}
+
+    [요청 사항]
+    1. 모든 기사를 나열하지 말고, **구매팀이 꼭 봐야 할 중요 기사 5~7개**만 선별하세요.
+    2. 각 기사에 대해 다음 형식으로 HTML 리스트 아이템(<li>)을 만들어 주세요.
+       - **[카테고리]** (예: ⚖️법규/리스크, 🏗️자재/시황, 🏢사내/경쟁사)
+       - **제목**: 기사 제목 (링크 연결)
+       - **핵심 요약**: 구매 담당자가 알아야 할 핵심 내용 1~2문장.
+       - **시사점**: 우리 회사(건설사 구매)에 미칠 영향이나 대응 방안 1문장.
+    3. 전체적인 시장 분위기를 보여주는 '오늘의 한 줄 브리핑'을 맨 처음에 작성해 주세요.
+    4. 출력은 오직 HTML body 안에 들어갈 내용만 작성하세요. (<html> 태그 제외)
+    """
+
     try:
-        genai.configure(api_key=GOOGLE_API_KEY)
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
-
-        news_text = ""
-        for item in news_items:
-            news_text += f"ID:{item['id']} | [{item['category']}] {item['title']}\n"
-
-        prompt = f"""
-        오늘은 {today_formatted}입니다.
-        당신은 포스코이앤씨 구매계약실의 수석 애널리스트입니다.
-        
-        [뉴스 목록] ({period_text} 수집된 데이터입니다)
-        {news_text}
-
-        [임무]
-        1. 전체적인 **시장 날씨 요약** (1~2문장).
-        2. 위 목록에서 구매 업무에 가장 중요한 **핵심 기사 3~5개**를 선정하여 심층 분석(Deep Dive).
-        
-        [🚨 중요: 과거 기사 필터링 (Sanity Check)]
-        - 제목과 문맥을 분석하여, 오늘({today_formatted}) 기준으로 시의성이 떨어지거나 이미 종료된 과거 사건(예: 2023년 행사, 작년 실적 등)은 절대 선정하지 마세요.
-        - **weather_summary 작성 시 (ID:숫자) 같은 참조 번호를 절대 포함하지 마세요.**
-
-        [필수 출력 형식 (JSON Only)]
-        반드시 아래 JSON 포맷으로만 응답하세요. 서론이나 마크다운 태그를 붙이지 마세요.
-        {{
-            "weather_summary": "시장 날씨 요약 문구 (날씨 아이콘 포함)",
-            "selected_cards": [
-                {{
-                    "id": 뉴스ID(숫자),
-                    "summary": "핵심 내용 요약 (3문장 내외, 수치 포함)",
-                    "insight": "구매계약실 대응 방안 (2문장)",
-                    "risk_level": "Critical" 또는 "Warning" 또는 "Info"
-                }}
-            ]
-        }}
-        """
-        
-        safety_settings = [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-        ]
-
-        response = model.generate_content(prompt, safety_settings=safety_settings)
-        
-        text = response.text
-        start_idx = text.find('{')
-        end_idx = text.rfind('}')
-        
-        if start_idx != -1 and end_idx != -1:
-            clean_json = text[start_idx:end_idx+1]
-            data = json.loads(clean_json)
-            
-            if 'weather_summary' in data:
-                data['weather_summary'] = re.sub(r'\s*\(ID:\s*\d+\)', '', data['weather_summary'], flags=re.IGNORECASE)
-                data['weather_summary'] = re.sub(r'ID:\s*\d+', '', data['weather_summary'], flags=re.IGNORECASE)
-            
-            return data
-        else:
-            return None
-
+        response = model.generate_content(prompt)
+        return response.text
     except Exception as e:
-        print(f"❌ AI 분석 중 오류: {e}")
-        return None
+        print(f"❌ AI 분석 중 오류 발생: {e}")
+        # 오류 발생 시 기본 목록이라도 반환하도록 처리
+        fallback_html = "<ul>"
+        for item in news_items:
+            fallback_html += f"<li><a href='{item['link']}'>{item['title']}</a></li>"
+        fallback_html += "</ul>"
+        return fallback_html
 
-def build_html_report(ai_data, news_items, is_monday=False):
-    kst_now = get_korea_time()
-    today_str = kst_now.strftime("%Y년 %m월 %d일")
+def send_email(html_content):
+    """수집 및 분석된 내용을 이메일로 발송합니다."""
+    if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECEIVERS:
+        print("❌ 이메일 설정이 누락되었습니다. 발송하지 않습니다.")
+        return
 
-    selected_map = {item['id']: item for item in ai_data['selected_cards']}
+    print("📧 이메일 발송 준비...")
     
-    grouped_news = {cat: [] for cat in CATEGORY_MAP.keys()}
-    grouped_news["기타"] = []
-    
-    for item in news_items:
-        cat = item['category']
-        if cat in grouped_news:
-            grouped_news[cat].append(item)
-        else:
-            grouped_news["기타"].append(item)
+    today_str = datetime.now().strftime("%Y-%m-%d (%a)")
+    subject = f"[구매실 Daily Briefing] {today_str} 주요 뉴스 및 리스크 점검"
 
-    html = f"""
-    <!DOCTYPE html>
+    # HTML 이메일 템플릿
+    full_html = f"""
     <html>
-    <head>
-    <style>
-        body {{ font-family: 'Pretendard', 'Malgun Gothic', sans-serif; line-height: 1.6; color: #333; background-color: #f2f4f7; margin: 0; padding: 0; }}
-        .email-container {{ max-width: 850px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
-        .header {{ background-color: #0054a6; color: #ffffff; padding: 40px 50px; }}
-        .content {{ padding: 50px; }}
-        
-        .weather-box {{ background-color: #eaf4fc; padding: 25px; border-radius: 12px; margin-bottom: 50px; border: 1px solid #dbeafe; }}
-        .weather-title {{ margin: 0 0 10px 0; color: #0054a6; font-size: 20px; font-weight: 700; }}
-        
-        .cat-title {{ font-size: 22px; color: #111; margin: 60px 0 20px 0; border-left: 5px solid #0054a6; padding-left: 15px; font-weight: 700; }}
-        
-        .card {{ background-color: #ffffff; border: 1px solid #eaecf0; border-radius: 16px; padding: 30px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }}
-        .card-title {{ font-size: 20px; font-weight: 700; color: #101828; margin-bottom: 12px; line-height: 1.4; word-break: keep-all; }}
-        .card-body {{ font-size: 16px; color: #475467; line-height: 1.7; margin-bottom: 20px; word-break: keep-all; }}
-        
-        .insight-table {{ width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 20px; border-radius: 8px; }}
-        .insight-label {{ padding: 15px; width: 1%; white-space: nowrap; vertical-align: top; font-weight: 700; font-size: 15px; }}
-        .insight-text {{ padding: 15px; font-size: 15px; line-height: 1.6; vertical-align: top; word-break: keep-all; }}
-        
-        .risk-Critical {{ background-color: #fdecea; color: #d32f2f; }}
-        .risk-Warning {{ background-color: #fff4e5; color: #ed6c02; }}
-        .risk-Info {{ background-color: #f0f9ff; color: #0288d1; }}
-        
-        .btn {{ display: inline-block; background-color: #fff; color: #344054; border: 1px solid #d0d5dd; padding: 8px 16px; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }}
-        
-        .headline-box {{ background-color: #f9fafb; padding: 20px; border-radius: 8px; margin-top: 10px; }}
-        .headline-title {{ font-size: 15px; font-weight: 700; color: #667085; margin-bottom: 10px; }}
-        .headline-item {{ margin-bottom: 8px; font-size: 14px; color: #555; list-style: none; }}
-        .headline-link {{ text-decoration: none; color: #4b5563; transition: color 0.2s; word-break: keep-all; cursor: pointer; }}
-        .headline-link:hover {{ color: #0054a6; text-decoration: underline; }}
-
-        .easter-egg-wrapper {{ text-align: center; margin: 30px 0; }}
-        .easter-egg {{
-            display: inline-block;
-            font-size: 12px;
-            color: transparent; 
-            cursor: help;
-            transition: all 0.5s ease;
-            user-select: all;
-        }}
-        .easter-egg:hover {{
-            color: #ff6b6b;
-            transform: scale(1.1) rotate(2deg);
-            font-weight: bold;
-        }}
-    </style>
-    </head>
-    <body>
-        <div class="email-container">
-            <div class="header">
-                <h1 style="margin:0; font-size:28px;">Daily Market & Risk Briefing</h1>
-                <div style="margin-top:10px; opacity:0.9;">POSCO E&C 구매계약실 | {today_str}</div>
-            </div>
-            <div class="content">
-                <div class="weather-box">
-                    <h2 class="weather-title">🌤️ Market Weather Summary</h2>
-                    <div style="font-size: 17px;">{ai_data.get('weather_summary', '시장 분석 데이터 없음')}</div>
-                </div>
-    """
-
-    content_parts = []
-    
-    for cat_name, items in grouped_news.items():
-        if not items: continue
-        
-        cat_html = f'<div class="cat-title">[{cat_name}]</div>'
-        
-        for item in items:
-            if item['id'] in selected_map:
-                ai_info = selected_map[item['id']]
-                risk_level = ai_info.get('risk_level', 'Info')
-                
-                bg_color = "#f0f9ff"
-                text_color = "#0288d1"
-                if risk_level == 'Critical': 
-                    bg_color, text_color = "#fdecea", "#d32f2f"
-                elif risk_level == 'Warning':
-                    bg_color, text_color = "#fff4e5", "#ed6c02"
-
-                cat_html += f"""
-                <div class="card">
-                    <div class="card-title">{item['title']}</div>
-                    <div class="card-body">{ai_info['summary']}</div>
-                    
-                    <table class="insight-table" style="background-color: {bg_color};">
-                        <tr>
-                            <td class="insight-label" style="color: {text_color};">💡 Insight:</td>
-                            <td class="insight-text" style="color: {text_color};">{ai_info['insight']}</td>
-                        </tr>
-                    </table>
-                    <div style="text-align: right;">
-                        <a href="{item['link']}" class="btn" target="_blank" rel="noopener noreferrer">🔗 원문 기사 보기</a>
-                    </div>
-                </div>
-                """
-        
-        headlines = [item for item in items if item['id'] not in selected_map]
-        if headlines:
-            cat_html += """
-            <div class="headline-box">
-                <div class="headline-title">📌 관련 주요 단신</div>
-                <ul style="padding-left: 20px; margin: 0;">
-            """
-            for h_item in headlines:
-                cat_html += f"""
-                <li class="headline-item">
-                    <a href="{h_item['link']}" class="headline-link" target="_blank" rel="noopener noreferrer">{h_item['title']}</a>
-                </li>
-                """
-            cat_html += "</ul></div>"
-            
-        content_parts.append(cat_html)
-
-    egg_html = """
-    <div class="easter-egg-wrapper">
-        <div class="easter-egg">
-            오? 저를 발견하셨군요! 연락주시면 커피 한잔 사드릴께요
+    <body style="font-family: 'Malgun Gothic', sans-serif; line-height: 1.6; color: #333;">
+        <div style="background-color: #0054a6; color: white; padding: 20px; text-align: center;">
+            <h2 style="margin:0;">POSCO E&C 구매실 Daily Agent</h2>
         </div>
-    </div>
-    """
-    
-    if len(content_parts) > 1:
-        insert_pos = random.randint(1, len(content_parts))
-        content_parts.insert(insert_pos, egg_html)
-    else:
-        content_parts.append(egg_html)
-
-    main_content = "".join(content_parts)
-
-    final_html = f"""
-                {main_content}
-                <div style="margin-top: 60px; text-align: center; color: #98a2b3; font-size: 13px; border-top: 1px solid #eee; padding-top: 20px;">
-                    <p>본 리포트는 AI Agent 시스템에 의해 실시간으로 생성되었습니다.</p>
-                    <p>문의: 구매계약기획그룹 송승호 프로 | © POSCO E&C</p>
-                </div>
-            </div>
+        <div style="padding: 20px; border: 1px solid #ddd; margin-top: 20px;">
+            <p>안녕하세요, 구매실 여러분.<br>
+            AI Agent가 취합한 오늘의 주요 구매/법규/시황 뉴스입니다.</p>
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+            
+            {html_content}
+            
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+            <p style="font-size: 12px; color: #888;">
+                * 본 메일은 Google News 및 Gemini AI를 통해 자동 생성되었습니다.<br>
+                * 문의: 구매기획 그룹
+            </p>
         </div>
     </body>
     </html>
     """
-    return html + final_html
 
-def send_email(html_body, is_monday=False):
-    if not html_body: return
-    
-    kst_now = get_korea_time()
-    today_str = kst_now.strftime("%Y년 %m월 %d일")
-    
     msg = MIMEMultipart()
     msg['From'] = EMAIL_SENDER
-    msg['To'] = f"구매계약실 여러분 <{EMAIL_SENDER}>"
-    msg['Subject'] = f"[Daily] {today_str} 구매계약실 시장 동향 보고"
-    msg.attach(MIMEText(html_body, 'html'))
+    msg['To'] = EMAIL_RECEIVERS
+    msg['Subject'] = subject
+    msg.attach(MIMEText(full_html, 'html'))
 
     try:
+        # Gmail SMTP 서버 연결
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
         
-        receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
-        
-        batch_size = 15
-        total_sent = 0
-        
-        for i in range(0, len(receivers), batch_size):
-            batch = receivers[i:i + batch_size]
-            server.sendmail(EMAIL_SENDER, batch, msg.as_string())
-            total_sent += len(batch)
-            print(f"📧 Batch {i//batch_size + 1} 발송 완료 ({len(batch)}명).")
-            
-            if i + batch_size < len(receivers):
-                print("⏳ 보안 쿨타임 60초 대기 중...")
-                time.sleep(60) 
-            
+        receivers_list = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
+        server.sendmail(EMAIL_SENDER, receivers_list, msg.as_string())
         server.quit()
-        print(f"✅ 총 {total_sent}명에게 발송 완료.")
-        
+        print(f"✅ 이메일 발송 성공! ({len(receivers_list)}명에게 전송)")
     except Exception as e:
-        print(f"❌ 발송 실패: {e}")
+        print(f"❌ 이메일 발송 실패: {e}")
 
 if __name__ == "__main__":
-    if not GOOGLE_API_KEY:
-        print("❌ API Key가 설정되지 않았습니다.")
+    # 1. 뉴스 수집
+    raw_news = fetch_news_rss(KEYWORDS)
+    
+    if raw_news:
+        # 2. AI 분석 및 요약
+        ai_summary_html = analyze_news_with_gemini(raw_news)
+        
+        # 3. 이메일 발송
+        send_email(ai_summary_html)
     else:
-        kst_now = get_korea_time()
-        weekday = kst_now.weekday() # 0:월요일 ~ 6:일요일
-
-        # 1. 주말 발송 차단 로직
-        if weekday in [5, 6]: # 5=토요일, 6=일요일
-            print("오늘은 주말(토/일)이므로 뉴스 브리핑을 발송하지 않습니다. (월요일에 통합 발송 예정)")
-        else:
-            # 2. 월요일 통합 크롤링 로직 판단
-            is_monday = (weekday == 0)
-            
-            # 월요일이면 3일(72시간), 그 외 평일이면 1일(24시간)
-            time_window_days = 3 if is_monday else 1
-            time_window_hours = 72 if is_monday else 24
-            
-            items = fetch_news(time_window_days, time_window_hours)
-            
-            if items:
-                # 분석 및 리포트 작성 시에도 월요일 여부 전달
-                ai_data = generate_analysis_data(items, is_monday)
-                if ai_data:
-                    final_html = build_html_report(ai_data, items, is_monday)
-                    send_email(final_html, is_monday)
-                else:
-                    print("❌ AI 분석 데이터 생성 실패")
-            else:
-                print("수집된 뉴스가 없습니다.")
+        print("수집된 뉴스가 없습니다.")
