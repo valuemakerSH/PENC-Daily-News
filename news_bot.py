@@ -6,6 +6,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 import google.generativeai as genai
 import time
+import urllib.parse  # URL 띄어쓰기 인코딩용 라이브러리 추가
 
 # --- 설정값 (GitHub Secrets에서 가져옴) ---
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
@@ -30,7 +31,10 @@ def fetch_news_rss(keywords):
     
     print("🔍 뉴스 수집 시작...")
     for keyword in keywords:
-        feed = feedparser.parse(base_url.format(keyword))
+        # 키워드의 띄어쓰기를 URL에 안전한 형태로 변환 (%20 등)
+        encoded_keyword = urllib.parse.quote(keyword)
+        feed = feedparser.parse(base_url.format(encoded_keyword))
+        
         # 키워드 당 최신 3개만 가져오기 (너무 많으면 읽기 힘듦)
         for entry in feed.entries[:3]:
             # 중복 제거 로직 (링크 기준)
