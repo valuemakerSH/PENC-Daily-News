@@ -7,6 +7,7 @@ import json
 import random
 import difflib 
 import re 
+import html  # [수정 1] HTML escape를 위해 추가
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
@@ -49,6 +50,41 @@ EXCLUDE_KEYWORDS = [
     "코인", "비트코인", "가상화폐", "리딩방",
     "MSN", "스토리", "숨겨진", "비하인드", "충격", "경악", "네티즌", "커뮤니티"
 ]
+
+# --- 해외 현지 로컬 뉴스 필터 설정 ---
+# 포스코이앤씨 및 한국 주요 건설사가 등장하면 어떤 매체 기사든 통과
+KOREAN_COMPANIES = [
+    "포스코이앤씨", "현대건설", "삼성물산", "GS건설", "대우건설",
+    "롯데건설", "DL이앤씨", "HDC현대산업개발", "SK에코플랜트", "한화건설"
+]
+
+# 문제가 확인된 해외 현지 매체명 (제목 끝 또는 source에 노출됨)
+# 새로운 해외 현지 매체가 확인되면 여기에 추가
+OVERSEAS_LOCAL_SOURCES = [
+    "인사이드비나", "insidevina",
+    "vietstock", "vnexpress",
+]
+
+def is_overseas_local_news(entry):
+    """
+    해외 현지 로컬 뉴스 여부 판단.
+    - 한국 건설사가 제목에 등장하면 무조건 통과 (False)
+    - 확인된 해외 현지 매체명이 제목 또는 source에 있으면 차단 (True)
+    - 그 외는 통과 (False)
+    """
+    title = entry.title
+    source = getattr(getattr(entry, 'source', None), 'title', '') or ''
+
+    # 한국 건설사가 주어면 어느 나라 뉴스든 통과
+    if any(company in title for company in KOREAN_COMPANIES):
+        return False
+
+    # 확인된 해외 현지 매체 → 차단
+    combined = title + source
+    if any(src.lower() in combined.lower() for src in OVERSEAS_LOCAL_SOURCES):
+        return True
+
+    return False
 
 def get_korea_time():
     utc_now = datetime.now(timezone.utc)
@@ -95,7 +131,8 @@ def get_category(keyword):
 def is_duplicate_topic(new_title, existing_items):
     for item in existing_items:
         similarity = difflib.SequenceMatcher(None, new_title, item['title']).ratio()
-        if similarity > 0.5: 
+        # [수정 3] 임계값 0.5 → 0.7: 0.5는 너무 낮아 서로 다른 기사도 중복 처리될 수 있음
+        if similarity > 0.7: 
             return True
     return False
 
@@ -112,7 +149,12 @@ def fetch_news(time_window_days=1, time_window_hours=24):
         
         try:
             feed = feedparser.parse(url)
-            if not feed.entries and hasattr(feed, 'bozo_exception'): pass
+
+            # [수정 2] RSS 파싱 실패 시 로그 출력 후 다음 키워드로 진행
+            if not feed.entries:
+                if hasattr(feed, 'bozo_exception') and feed.bozo_exception:
+                    print(f"⚠️ RSS 파싱 오류 [{keyword}]: {feed.bozo_exception}")
+                continue
 
             valid_count = 0
             for entry in feed.entries[:30]: 
@@ -120,6 +162,7 @@ def fetch_news(time_window_days=1, time_window_hours=24):
 
                 if is_recent(entry, time_window_hours):
                     if is_spam_news(entry.title): continue
+                    if is_overseas_local_news(entry): continue  # [수정 6] 해외 현지 로컬 뉴스 차단 (한국 건설사 등장 시 예외)
                     if any(item['link'] == entry.link for item in news_items): continue
                     if is_duplicate_topic(entry.title, news_items): continue
 
@@ -129,7 +172,7 @@ def fetch_news(time_window_days=1, time_window_hours=24):
                         "link": entry.link,
                         "keyword": keyword,
                         "category": get_category(keyword),
-                        "date": entry.published
+                        "date": getattr(entry, 'published', '')  # published_parsed만 있는 경우 AttributeError 방어
                     })
                     valid_count += 1
         except Exception as e:
@@ -149,7 +192,6 @@ def generate_analysis_data(news_items, is_monday=False):
     print("🧠 AI 분석 시작 (JSON 모드)...")
     try:
         genai.configure(api_key=GOOGLE_API_KEY)
-        # 최신 모델 적용
         model = genai.GenerativeModel('gemini-2.5-flash')
 
         news_text = ""
@@ -215,6 +257,42 @@ def generate_analysis_data(news_items, is_monday=False):
         print(f"❌ AI 분석 중 오류: {e}")
         return None
 
+def build_exec_summary(ai_data, news_items):
+    """
+    AI가 선정한 카드 중 상위 3개를 risk_level 우선순위(Critical→Warning→Info) 순으로
+    정렬하여 Executive Summary 블록을 생성합니다.
+    """
+    RISK_ORDER = {"Critical": 0, "Warning": 1, "Info": 2}
+    news_map = {item['id']: item for item in news_items}
+
+    sorted_cards = sorted(
+        ai_data.get('selected_cards', []),
+        key=lambda c: RISK_ORDER.get(c.get('risk_level', 'Info'), 2)
+    )[:3]
+
+    if not sorted_cards:
+        return ''
+
+    rows_html = ''
+    for idx, card in enumerate(sorted_cards, start=1):
+        news = news_map.get(card['id'], {})
+        title = html.escape(news.get('title', '제목 없음'))
+        risk = card.get('risk_level', 'Info')
+        rows_html += f"""
+        <div class="exec-row">
+            <div class="exec-num">{idx}</div>
+            <div>
+                <span class="exec-badge exec-badge-{risk}">{risk}</span>
+                <div class="exec-text" style="margin-top:4px;">{title}</div>
+            </div>
+        </div>"""
+
+    return f"""
+    <div class="exec-summary">
+        <div class="exec-summary-title">📋 Executive Summary — 오늘의 핵심 3가지</div>
+        {rows_html}
+    </div>"""
+
 def build_html_report(ai_data, news_items, is_monday=False):
     kst_now = get_korea_time()
     today_str = kst_now.strftime("%Y년 %m월 %d일")
@@ -231,7 +309,7 @@ def build_html_report(ai_data, news_items, is_monday=False):
         else:
             grouped_news["기타"].append(item)
 
-    html = f"""
+    html_head = f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -266,6 +344,17 @@ def build_html_report(ai_data, news_items, is_monday=False):
         .headline-link {{ text-decoration: none; color: #4b5563; transition: color 0.2s; word-break: keep-all; cursor: pointer; }}
         .headline-link:hover {{ color: #0054a6; text-decoration: underline; }}
 
+        .exec-summary {{ background-color: #f8f9ff; border: 1px solid #c7d2fe; border-radius: 12px; padding: 25px 30px; margin-bottom: 50px; }}
+        .exec-summary-title {{ margin: 0 0 16px 0; color: #3730a3; font-size: 16px; font-weight: 700; letter-spacing: 0.03em; }}
+        .exec-row {{ display: flex; align-items: flex-start; gap: 14px; padding: 10px 0; border-bottom: 1px solid #e0e7ff; }}
+        .exec-row:last-child {{ border-bottom: none; padding-bottom: 0; }}
+        .exec-num {{ font-size: 20px; font-weight: 800; color: #4f46e5; min-width: 28px; line-height: 1.4; }}
+        .exec-badge {{ font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; white-space: nowrap; margin-top: 3px; }}
+        .exec-badge-Critical {{ background-color: #fdecea; color: #d32f2f; }}
+        .exec-badge-Warning {{ background-color: #fff4e5; color: #ed6c02; }}
+        .exec-badge-Info {{ background-color: #f0f9ff; color: #0288d1; }}
+        .exec-text {{ font-size: 15px; color: #1e1b4b; font-weight: 600; line-height: 1.5; word-break: keep-all; }}
+
         .easter-egg-wrapper {{ text-align: center; margin: 30px 0; }}
         .easter-egg {{
             display: inline-block;
@@ -293,6 +382,7 @@ def build_html_report(ai_data, news_items, is_monday=False):
                     <h2 class="weather-title">🌤️ Market Weather Summary</h2>
                     <div style="font-size: 17px;">{ai_data.get('weather_summary', '시장 분석 데이터 없음')}</div>
                 </div>
+                {build_exec_summary(ai_data, news_items)}
     """
 
     content_parts = []
@@ -303,6 +393,9 @@ def build_html_report(ai_data, news_items, is_monday=False):
         cat_html = f'<div class="cat-title">[{cat_name}]</div>'
         
         for item in items:
+            # [수정 5] RSS에서 수집된 뉴스 제목을 HTML에 삽입 전 이스케이프 처리
+            safe_title = html.escape(item['title'])
+
             if item['id'] in selected_map:
                 ai_info = selected_map[item['id']]
                 risk_level = ai_info.get('risk_level', 'Info')
@@ -316,7 +409,7 @@ def build_html_report(ai_data, news_items, is_monday=False):
 
                 cat_html += f"""
                 <div class="card">
-                    <div class="card-title">{item['title']}</div>
+                    <div class="card-title">{safe_title}</div>
                     <div class="card-body">{ai_info['summary']}</div>
                     
                     <table class="insight-table" style="background-color: {bg_color};">
@@ -339,9 +432,11 @@ def build_html_report(ai_data, news_items, is_monday=False):
                 <ul style="padding-left: 20px; margin: 0;">
             """
             for h_item in headlines:
+                # [수정 5] 단신 제목도 동일하게 이스케이프 처리
+                safe_h_title = html.escape(h_item['title'])
                 cat_html += f"""
                 <li class="headline-item">
-                    <a href="{h_item['link']}" class="headline-link" target="_blank" rel="noopener noreferrer">{h_item['title']}</a>
+                    <a href="{h_item['link']}" class="headline-link" target="_blank" rel="noopener noreferrer">{safe_h_title}</a>
                 </li>
                 """
             cat_html += "</ul></div>"
@@ -375,7 +470,7 @@ def build_html_report(ai_data, news_items, is_monday=False):
     </body>
     </html>
     """
-    return html + final_html
+    return html_head + final_html
 
 def send_email(html_body, is_monday=False):
     if not html_body: return
@@ -394,7 +489,8 @@ def send_email(html_body, is_monday=False):
         server.starttls()
         server.login(EMAIL_SENDER, EMAIL_PASSWORD)
         
-        receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',')]
+        # [수정 4] 빈 문자열 수신자 필터링: 환경변수 끝 쉼표 등으로 인한 SMTP 오류 방지
+        receivers = [r.strip() for r in EMAIL_RECEIVERS.split(',') if r.strip()]
         
         batch_size = 15
         total_sent = 0
@@ -416,32 +512,40 @@ def send_email(html_body, is_monday=False):
         print(f"❌ 발송 실패: {e}")
 
 if __name__ == "__main__":
-    if not GOOGLE_API_KEY:
-        print("❌ API Key가 설정되지 않았습니다.")
-    else:
-        kst_now = get_korea_time()
-        weekday = kst_now.weekday() # 0:월요일 ~ 6:일요일
+    # [수정 1] 4개 환경변수 사전 검증: 하나라도 누락 시 명확한 오류 메시지 후 종료
+    required_env = {
+        "GOOGLE_API_KEY": GOOGLE_API_KEY,
+        "EMAIL_SENDER": EMAIL_SENDER,
+        "EMAIL_PASSWORD": EMAIL_PASSWORD,
+        "EMAIL_RECEIVERS": EMAIL_RECEIVERS
+    }
+    missing_vars = [key for key, val in required_env.items() if not val]
+    if missing_vars:
+        print(f"❌ 필수 환경변수가 설정되지 않았습니다: {', '.join(missing_vars)}")
+        exit(1)
 
-        # 1. 주말 발송 차단 로직
-        if weekday in [5, 6]: # 5=토요일, 6=일요일
-            print("오늘은 주말(토/일)이므로 뉴스 브리핑을 발송하지 않습니다. (월요일에 통합 발송 예정)")
-        else:
-            # 2. 월요일 통합 크롤링 로직 판단
-            is_monday = (weekday == 0)
-            
-            # 월요일이면 3일(72시간), 그 외 평일이면 1일(24시간)
-            time_window_days = 3 if is_monday else 1
-            time_window_hours = 72 if is_monday else 24
-            
-            items = fetch_news(time_window_days, time_window_hours)
-            
-            if items:
-                # 분석 및 리포트 작성 시에도 월요일 여부 전달
-                ai_data = generate_analysis_data(items, is_monday)
-                if ai_data:
-                    final_html = build_html_report(ai_data, items, is_monday)
-                    send_email(final_html, is_monday)
-                else:
-                    print("❌ AI 분석 데이터 생성 실패")
+    kst_now = get_korea_time()
+    weekday = kst_now.weekday()  # 0:월요일 ~ 6:일요일
+
+    # 1. 주말 발송 차단 로직
+    if weekday in [5, 6]:  # 5=토요일, 6=일요일
+        print("오늘은 주말(토/일)이므로 뉴스 브리핑을 발송하지 않습니다. (월요일에 통합 발송 예정)")
+    else:
+        # 2. 월요일 통합 크롤링 로직 판단
+        is_monday = (weekday == 0)
+        
+        # 월요일이면 3일(72시간), 그 외 평일이면 1일(24시간)
+        time_window_days = 3 if is_monday else 1
+        time_window_hours = 72 if is_monday else 24
+        
+        items = fetch_news(time_window_days, time_window_hours)
+        
+        if items:
+            ai_data = generate_analysis_data(items, is_monday)
+            if ai_data:
+                final_html = build_html_report(ai_data, items, is_monday)
+                send_email(final_html, is_monday)
             else:
-                print("수집된 뉴스가 없습니다.")
+                print("❌ AI 분석 데이터 생성 실패")
+        else:
+            print("수집된 뉴스가 없습니다.")
