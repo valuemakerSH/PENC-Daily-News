@@ -96,8 +96,11 @@ def is_spam_news(title):
         if bad_word in title: return True
     return False
 
-# [수정 8] 영상 콘텐츠 필터: VOD/영상 기사는 날짜 재색인 오류의 주원인이므로 제외
-VIDEO_KEYWORDS = ["[영상]", "[동영상]", "[VOD]", "[vod]", "[인터뷰]", "ON AIR", "영상뉴스", "뉴스영상"]
+# [수정 8] 영상/사진 콘텐츠 필터: VOD·포토 기사는 날짜 재색인 오류의 주원인이므로 제외
+VIDEO_KEYWORDS = [
+    "[영상]", "[동영상]", "[VOD]", "[vod]", "[인터뷰]", "ON AIR", "영상뉴스", "뉴스영상",
+    "[포토]", "[사진]", "[화보]",  # 포토뉴스도 재색인 발생 유형
+]
 
 def is_video_content(title):
     """영상/VOD 콘텐츠 여부 판단. 제목에 영상 관련 태그가 포함된 경우 차단."""
@@ -122,11 +125,6 @@ def is_recent(entry, time_window_hours=24):
 
         now_utc = datetime.now(timezone.utc)
         if published_dt > now_utc + timedelta(minutes=10): return False
-
-        # [수정 7] 연도 Sanity Check: RSS 재색인으로 날짜가 조작된 과거 기사 차단
-        # Google News는 영상/VOD 콘텐츠 재크롤링 시 published 날짜를 최근으로 재발급하는 경우가 있음
-        if published_dt < now_utc - timedelta(days=180):
-            return False
 
         # 동적으로 설정된 시간(24h or 72h) 기준으로 컷오프
         cutoff_time = now_utc - timedelta(hours=time_window_hours)
