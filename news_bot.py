@@ -96,6 +96,13 @@ def is_spam_news(title):
         if bad_word in title: return True
     return False
 
+# [수정 8] 영상 콘텐츠 필터: VOD/영상 기사는 날짜 재색인 오류의 주원인이므로 제외
+VIDEO_KEYWORDS = ["[영상]", "[동영상]", "[VOD]", "[vod]", "[인터뷰]", "ON AIR", "영상뉴스", "뉴스영상"]
+
+def is_video_content(title):
+    """영상/VOD 콘텐츠 여부 판단. 제목에 영상 관련 태그가 포함된 경우 차단."""
+    return any(kw in title for kw in VIDEO_KEYWORDS)
+
 def is_recent(entry, time_window_hours=24):
     """
     time_window_hours: 평일은 24시간, 월요일은 72시간(주말 포함)으로 유동적으로 작동합니다.
@@ -115,7 +122,12 @@ def is_recent(entry, time_window_hours=24):
 
         now_utc = datetime.now(timezone.utc)
         if published_dt > now_utc + timedelta(minutes=10): return False
-        
+
+        # [수정 7] 연도 Sanity Check: RSS 재색인으로 날짜가 조작된 과거 기사 차단
+        # Google News는 영상/VOD 콘텐츠 재크롤링 시 published 날짜를 최근으로 재발급하는 경우가 있음
+        if published_dt < now_utc - timedelta(days=180):
+            return False
+
         # 동적으로 설정된 시간(24h or 72h) 기준으로 컷오프
         cutoff_time = now_utc - timedelta(hours=time_window_hours)
         return published_dt > cutoff_time
@@ -162,7 +174,8 @@ def fetch_news(time_window_days=1, time_window_hours=24):
 
                 if is_recent(entry, time_window_hours):
                     if is_spam_news(entry.title): continue
-                    if is_overseas_local_news(entry): continue  # [수정 6] 해외 현지 로컬 뉴스 차단 (한국 건설사 등장 시 예외)
+                    if is_video_content(entry.title): continue          # [수정 8] 영상/VOD 콘텐츠 차단
+                    if is_overseas_local_news(entry): continue          # [수정 6] 해외 현지 로컬 뉴스 차단
                     if any(item['link'] == entry.link for item in news_items): continue
                     if is_duplicate_topic(entry.title, news_items): continue
 
@@ -196,7 +209,8 @@ def generate_analysis_data(news_items, is_monday=False):
 
         news_text = ""
         for item in news_items:
-            news_text += f"ID:{item['id']} | [{item['category']}] {item['title']}\n"
+            # [수정 9] 날짜 정보 추가: AI가 과거 기사를 직접 판별할 수 있도록
+            news_text += f"ID:{item['id']} | [{item['category']}] [날짜:{item['date']}] {item['title']}\n"
 
         prompt = f"""
         오늘은 {today_formatted}입니다.
