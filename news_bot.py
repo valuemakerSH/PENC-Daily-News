@@ -8,6 +8,7 @@ import random
 import difflib 
 import re 
 import html  # [수정 1] HTML escape를 위해 추가
+import requests  # [수정 10] 도메인 차단을 위한 리다이렉트 추적
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
@@ -64,6 +65,42 @@ OVERSEAS_LOCAL_SOURCES = [
     "인사이드비나", "insidevina",
     "vietstock", "vnexpress",
 ]
+
+# [수정 10] 도메인 블랙리스트: Google RSS 리다이렉트를 따라가 실제 도메인 확인 후 차단
+# 새로운 해외 현지 매체 도메인이 확인되면 여기에 추가
+BLOCKED_DOMAINS = [
+    "vietnam.vn",
+    "insidevina.com",
+    "vnexpress.net",
+    "vietstock.vn",
+    "baodautu.vn",
+    "cafef.vn",
+]
+
+def get_real_domain(google_redirect_url):
+    """Google News 리다이렉트 URL을 따라가 실제 도메인 반환. 실패 시 빈 문자열."""
+    try:
+        res = requests.head(google_redirect_url, allow_redirects=True, timeout=3)
+        from urllib.parse import urlparse
+        return urlparse(res.url).netloc.lower()
+    except Exception:
+        return ""
+
+def is_blocked_domain(entry):
+    """
+    실제 기사 도메인이 BLOCKED_DOMAINS에 포함되는지 확인.
+    - 한국 건설사가 제목에 있으면 차단 대상 도메인이더라도 통과
+    - 리다이렉트 실패 시 차단하지 않음 (안전한 방향으로 통과)
+    """
+    # 한국 건설사 포함 시 무조건 통과
+    if any(company in entry.title for company in KOREAN_COMPANIES):
+        return False
+
+    domain = get_real_domain(entry.link)
+    if not domain:
+        return False  # 도메인 확인 실패 시 통과 (차단하지 않음)
+
+    return any(blocked in domain for blocked in BLOCKED_DOMAINS)
 
 def is_overseas_local_news(entry):
     """
@@ -173,9 +210,10 @@ def fetch_news(time_window_days=1, time_window_hours=24):
                 if is_recent(entry, time_window_hours):
                     if is_spam_news(entry.title): continue
                     if is_video_content(entry.title): continue          # [수정 8] 영상/VOD 콘텐츠 차단
-                    if is_overseas_local_news(entry): continue          # [수정 6] 해외 현지 로컬 뉴스 차단
+                    if is_overseas_local_news(entry): continue          # [수정 6] 해외 현지 로컬 뉴스 차단 (제목/source 기반)
                     if any(item['link'] == entry.link for item in news_items): continue
                     if is_duplicate_topic(entry.title, news_items): continue
+                    if is_blocked_domain(entry): continue               # [수정 10] 실제 도메인 확인 후 차단 (리다이렉트 추적)
 
                     news_items.append({
                         "id": len(news_items),
